@@ -1,0 +1,55 @@
+{
+  "log": {
+    "path": "%ProgramData%\\exmon\\exmon.log",
+    "maxSizeMB": 50,
+    "maxFiles": 5,
+    "flushIntervalMs": 1000
+  },
+  "wifi": {
+    "enabled": true,
+    "pollSeconds": 5,
+    "neighbors": false,
+    "debugPoll": false,
+    "rssiThreshold": 3,
+    "rateChangePercent": 50,
+    "errorPctThreshold": 10,
+    "minStatsFrames": 500,
+    "heartbeatSeconds": 15
+  },
+  "incident": {
+    "enabled": true,
+    "dir": "%ProgramData%\\exmon\\incidents",
+    "windowMinutes": 10,
+    "postTriggerSeconds": 30,
+    "cooldownSeconds": 300,
+    "maxIncidents": 100,
+    "triggers": [
+      { "name": "weak-signal",  "source": "wifi", "metric": "rssi_dbm",       "op": "<", "threshold": -75, "forSamples": 3 },
+      { "name": "high-retries", "source": "wifi", "metric": "retry_pct",      "op": ">", "threshold": 40,  "forSamples": 2 },
+      { "name": "handshake",    "source": "wifi", "metric": "handshake_fail", "op": ">", "threshold": 0 }
+    ]
+  },
+  "remote": {
+    "enabled": true,
+    "endpoint": "",
+    "outbox": "%ProgramData%\\exmon\\remote-outbox.jsonl",
+    "spoolDir": "%ProgramData%\\exmon\\remote-spool",
+    "segmentKB": 1024,
+    "maxSpoolMB": 100,
+    "batchSize": 50,
+    "flushIntervalMs": 5000,
+    "retryInitialSeconds": 5,
+    "retryMaxMinutes": 15,
+    "include": [
+      { "source": "wifi", "kinds": ["ACM/*", "MSM/*"] },
+      { "kinds": ["INCIDENT/*"] }
+    ]
+  },
+  "baseline": {
+    "enabled": false,
+    "path": "%ProgramData%\\exmon\\baseline.jsonl",
+    "summaryMinutes": 15,
+    "maxSizeMB": 100,
+    "maxFiles": 5
+  }
+}
