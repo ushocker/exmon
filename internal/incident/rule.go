@@ -14,6 +14,7 @@ type Rule struct {
 	Op         string  `json:"op"`                // "<", "<=", ">", ">="
 	Threshold  float64 `json:"threshold"`
 	ForSamples int     `json:"forSamples,omitempty"` // consecutive breaching samples needed; default 1
+	Severity   int     `json:"severity,omitempty"`   // 1 = most serious ... 5 = least; default 3
 }
 
 // Validate checks that the rule can be evaluated.
@@ -25,6 +26,9 @@ func (r Rule) Validate() error {
 		return fmt.Errorf("%s: source must be set", r.Name)
 	case r.Metric == "":
 		return fmt.Errorf("%s: metric must be set", r.Name)
+	}
+	if r.Severity < 0 || r.Severity > MaxSeverity {
+		return fmt.Errorf("%s: severity %d must be 1 (most serious) to %d", r.Name, r.Severity, MaxSeverity)
 	}
 	switch r.Op {
 	case "<", "<=", ">", ">=":
@@ -58,5 +62,19 @@ func (r Rule) matches(source, subject string) bool {
 }
 
 func (r Rule) String() string {
-	return fmt.Sprintf("%s %s %s %g", r.Source, r.Metric, r.Op, r.Threshold)
+	return fmt.Sprintf("sev%d %s %s %s %g", r.severity(), r.Source, r.Metric, r.Op, r.Threshold)
+}
+
+// Severity scale: 1 is the most serious (Sev1/P1), 5 the least.
+const (
+	MaxSeverity     = 5
+	DefaultSeverity = 3
+)
+
+// severity is the rule's severity, with 0 meaning DefaultSeverity.
+func (r Rule) severity() int {
+	if r.Severity == 0 {
+		return DefaultSeverity
+	}
+	return r.Severity
 }

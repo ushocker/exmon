@@ -44,13 +44,14 @@ type ifaceSample struct {
 
 // Metric names reported on every poll, and which direction is bad for each.
 var metricDirections = map[string]event.Direction{
-	"rssi_dbm":       event.LowIsBad,
-	"signal_quality": event.LowIsBad,
-	"rx_kbps":        event.LowIsBad,
-	"tx_kbps":        event.LowIsBad,
-	"retry_pct":      event.HighIsBad,
-	"fcs_pct":        event.HighIsBad,
-	"handshake_fail": event.HighIsBad,
+	"rssi_dbm":           event.LowIsBad,
+	"signal_quality":     event.LowIsBad,
+	"rx_kbps":            event.LowIsBad,
+	"tx_kbps":            event.LowIsBad,
+	"retry_pct":          event.HighIsBad,
+	"fcs_pct":            event.HighIsBad,
+	"handshake_fail":     event.HighIsBad,
+	"recent_disconnects": event.HighIsBad,
 }
 
 // poller remembers the last logged sample so it can log only on change.
@@ -65,6 +66,10 @@ type poller struct {
 	// because the driver doesn't change.
 	inconsistent map[string]bool
 
+	// Times of ACM/disconnected notifications per interface, for recent_disconnects.
+	// Kept across handle reopens: a WlanSvc restart doesn't undo a disconnect.
+	disconnects map[string][]time.Time
+
 	lastLogged time.Time        // when the last POLL line was written, for the heartbeat
 	now        func() time.Time // the clock; tests replace it
 }
@@ -75,6 +80,7 @@ func newPoller(cfg Config) *poller {
 		last:         map[string]ifaceSample{},
 		prevStats:    map[string]wlan.Counters{},
 		inconsistent: map[string]bool{},
+		disconnects:  map[string][]time.Time{},
 		now:          time.Now, // a function value: p.now() calls time.Now()
 	}
 }
@@ -85,6 +91,24 @@ func (p *poller) reset() {
 	p.prevStats = map[string]wlan.Counters{}
 	p.statsWarned = false
 	p.lastLogged = time.Time{}
+}
+
+// noteDisconnect records an ACM/disconnected notification for an interface.
+func (p *poller) noteDisconnect(key string) {
+	p.disconnects[key] = append(p.disconnects[key], p.now())
+}
+
+// recentDisconnects counts an interface's disconnects within the last
+// DisconnectWindowMinutes and forgets older ones.
+func (p *poller) recentDisconnects(key string) int {
+	cutoff := p.now().Add(-time.Duration(p.cfg.DisconnectWindowMinutes) * time.Minute)
+	times := p.disconnects[key]
+	i := 0
+	for i < len(times) && times[i].Before(cutoff) {
+		i++
+	}
+	p.disconnects[key] = times[i:]
+	return len(times) - i
 }
 
 // heartbeatDue reports whether it has been HeartbeatSeconds since the last POLL line.
@@ -159,6 +183,7 @@ func (p *poller) reportMetrics(samples []ifaceSample, log event.Logger) {
 			}
 			p.prevStats[s.Key] = *s.Stats
 		}
+		m["recent_disconnects"] = float64(p.recentDisconnects(s.Key))
 		log.Metrics(s.Desc, m)
 	}
 }
@@ -261,16 +286,17 @@ func (p *poller) sample(c *wlan.Client, log event.Logger, iface wlan.Interface) 
 		}
 	}
 
+	sec := fmt.Sprintf("auth=%s cipher=%s", wlan.AuthName(conn.AuthAlgorithm), wlan.CipherName(conn.Cipher))
 	if cur != nil {
 		ch, band := wlan.FreqToChannel(cur.FreqKHz)
 		s.RSSI, s.HasRSSI = cur.RSSI, true
-		s.Sig = fmt.Sprintf("connected|%s|%s|%d|%s|%d", conn.SSID, conn.BSSID, ch, band, conn.PhyType)
-		s.Text = fmt.Sprintf("[%s] ssid=%q bssid=%s rssi=%ddBm ch=%d (%s) phy=%s rx=%dkbps tx=%dkbps %s",
-			s.Desc, conn.SSID, conn.BSSID, cur.RSSI, ch, band, phy, s.Rx, s.Tx, bssExtra(cur))
+		s.Sig = fmt.Sprintf("connected|%s|%s|%d|%s|%d|%s", conn.SSID, conn.BSSID, ch, band, conn.PhyType, sec)
+		s.Text = fmt.Sprintf("[%s] ssid=%q bssid=%s rssi=%ddBm ch=%d (%s) phy=%s %s rx=%dkbps tx=%dkbps %s",
+			s.Desc, conn.SSID, conn.BSSID, cur.RSSI, ch, band, phy, sec, s.Rx, s.Tx, bssExtra(cur))
 	} else {
-		s.Sig = fmt.Sprintf("connected-norssi|%s|%s|%d", conn.SSID, conn.BSSID, conn.PhyType)
-		s.Text = fmt.Sprintf("[%s] ssid=%q bssid=%s rssi=n/a (bssid not in scan cache) phy=%s rx=%dkbps tx=%dkbps",
-			s.Desc, conn.SSID, conn.BSSID, phy, s.Rx, s.Tx)
+		s.Sig = fmt.Sprintf("connected-norssi|%s|%s|%d|%s", conn.SSID, conn.BSSID, conn.PhyType, sec)
+		s.Text = fmt.Sprintf("[%s] ssid=%q bssid=%s rssi=n/a (bssid not in scan cache) phy=%s %s rx=%dkbps tx=%dkbps",
+			s.Desc, conn.SSID, conn.BSSID, phy, sec, s.Rx, s.Tx)
 	}
 	if len(neighbors) > 0 {
 		s.Neighbors = fmt.Sprintf("[%s] same-ssid: %s", s.Desc, strings.Join(neighbors, "; "))

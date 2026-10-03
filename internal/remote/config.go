@@ -2,6 +2,7 @@ package remote
 
 import (
 	"errors"
+	"fmt"
 	"path"
 	"strings"
 
@@ -21,14 +22,20 @@ type Config struct {
 	RetryInitialSeconds int        `json:"retryInitialSeconds"` // first retry delay after a failed send
 	RetryMaxMinutes     int        `json:"retryMaxMinutes"`     // retry delay doubles up to this, then stays
 	SimulateOffline     bool       `json:"simulateOffline"`     // testing: every send fails
+	Host                string     `json:"-"`                   // computer name stamped on each record (set by main)
 	Include             []Selector `json:"include"`             // which events to forward
 }
 
 // Selector picks events by source and kind. Kinds are path.Match patterns such as
 // "ACM/*". An empty Source or empty Kinds matches everything.
+//
+// SeverityAtLeast N (1-5, 1 = most serious) also requires the event to carry a
+// severity of N or more serious: 2 matches Sev1 and Sev2. Events without a severity
+// (everything except incidents) never match such a selector. 0 = no severity filter.
 type Selector struct {
-	Source string   `json:"source,omitempty"`
-	Kinds  []string `json:"kinds,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	Kinds           []string `json:"kinds,omitempty"`
+	SeverityAtLeast int      `json:"severityAtLeast,omitempty"`
 }
 
 // DefaultConfig returns the settings used when nothing else is configured.
@@ -61,6 +68,9 @@ func (c Config) Validate() error {
 		return errors.New("remote retryInitialSeconds and retryMaxMinutes must be >= 1")
 	}
 	for _, s := range c.Include {
+		if s.SeverityAtLeast < 0 || s.SeverityAtLeast > 5 {
+			return fmt.Errorf("remote include: severityAtLeast %d must be 1 (most serious) to 5, or 0 for none", s.SeverityAtLeast)
+		}
 		for _, k := range s.Kinds {
 			if _, err := path.Match(k, ""); err != nil {
 				return errors.New("remote include: bad pattern " + k)
@@ -70,10 +80,12 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// wanted reports whether an event should be forwarded. Measurements and the queue's
-// own REMOTE/* status lines are never forwarded.
+// wanted reports whether an event should be forwarded. Measurements, the queue's
+// own REMOTE/* status lines and the internal INCIDENT/hold and /release bookkeeping
+// are never forwarded.
 func (c Config) wanted(e event.Event) bool {
-	if e.IsMetrics() || strings.HasPrefix(e.Kind, "REMOTE/") {
+	if e.IsMetrics() || strings.HasPrefix(e.Kind, "REMOTE/") ||
+		e.Kind == "INCIDENT/hold" || e.Kind == "INCIDENT/release" {
 		return false
 	}
 	for _, s := range c.Include {
@@ -86,6 +98,9 @@ func (c Config) wanted(e event.Event) bool {
 
 func (s Selector) matches(e event.Event) bool {
 	if s.Source != "" && s.Source != e.Source {
+		return false
+	}
+	if s.SeverityAtLeast > 0 && (e.Severity < 1 || e.Severity > s.SeverityAtLeast) {
 		return false
 	}
 	if len(s.Kinds) == 0 {

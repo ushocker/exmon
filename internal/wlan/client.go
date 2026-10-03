@@ -23,6 +23,8 @@ type Connection struct {
 	SignalQuality uint32 // 0-100
 	RxRate        uint32 // kbps
 	TxRate        uint32 // kbps
+	AuthAlgorithm uint32 // DOT11_AUTH_ALGORITHM; see AuthName
+	Cipher        uint32 // DOT11_CIPHER_ALGORITHM; see CipherName
 }
 
 // BSS is one access point (radio) from the scan cache.
@@ -121,6 +123,8 @@ func (c *Client) CurrentConnection(guid windows.GUID) (Connection, error) {
 		SignalQuality: a.SignalQuality,
 		RxRate:        a.RxRate,
 		TxRate:        a.TxRate,
+		AuthAlgorithm: attrs.Security.AuthAlgorithm,
+		Cipher:        attrs.Security.CipherAlgorithm,
 	}, nil
 }
 

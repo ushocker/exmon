@@ -3,3 +3,4 @@ baseline*.jsonl
 baseline-summary.txt
 *.exe
 reference/
+exmon.json

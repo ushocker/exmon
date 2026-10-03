@@ -1,28 +1,41 @@
-// exmon runs monitors (Wi-Fi today, more later) and fans their events out to the
-// log file, the incident engine, the remote queue and the baseline recorder.
+// exmon runs monitors (Wi-Fi, network adapters, VPN, connectivity probes) and fans
+// their events out to the log file, the incident engine, the remote queue and the
+// baseline recorder.
 package main
 
 import (
 	"context"
+	_ "embed" // enables the //go:embed directive below
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 
 	"exmon/internal/baseline"
 	"exmon/internal/config"
+	"exmon/internal/device"
 	"exmon/internal/event"
 	"exmon/internal/eventlog"
 	"exmon/internal/incident"
+	"exmon/internal/nic"
+	"exmon/internal/probe"
 	"exmon/internal/remote"
 	"exmon/internal/source"
+	"exmon/internal/vpn"
 	"exmon/internal/wifi"
 )
 
 // busBuffer is how many events each consumer can fall behind before Publish waits.
 const busBuffer = 4096
+
+// starterConfig is exmon.example.json, copied into the executable at build time by
+// the go:embed directive, so --write-default-config works with just the .exe.
+//
+//go:embed exmon.example.json
+var starterConfig []byte
 
 func main() {
 	opts, err := config.Load(os.Args[1:])
@@ -33,6 +46,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		os.Exit(2)
 	}
+	if opts.WriteDefaultConfig != "" {
+		if err := config.WriteDefault(opts.WriteDefaultConfig, starterConfig); err != nil {
+			fmt.Fprintln(os.Stderr, "write default config:", err)
+			os.Exit(1)
+		}
+		fmt.Println("wrote starter config to", opts.WriteDefaultConfig)
+		fmt.Println("edit it (at least the probe endpoints and httpTests), then run exmon")
+		return
+	}
 	if err := run(opts); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -41,6 +63,9 @@ func main() {
 
 func run(opts config.Options) error {
 	bus := event.NewBus()
+	dev := device.Get()
+	opts.Incident.Device = dev.String()
+	opts.Remote.Host = dev.Computer
 
 	// Consumers subscribe before anything is published. Each adds a "wait" function
 	// to stops; at shutdown they run in reverse order, so the log file goes last.
@@ -85,6 +110,12 @@ func run(opts config.Options) error {
 		stops = append(stops, engine.Wait)
 	}
 
+	// Path traces: periodic, and on incidents (the tracer holds the incident open).
+	if opts.Probe.Enabled && (opts.Probe.PathTrace.IntervalMinutes > 0 || (opts.Probe.PathTrace.OnIncident && opts.Incident.Enabled)) {
+		tracer := probe.StartTracer(opts.Probe, bus.Subscribe("pathtrace", busBuffer, event.Blocking), bus.For("pathtrace"))
+		stops = append(stops, tracer.Wait)
+	}
+
 	if opts.Remote.Enabled {
 		// TODO: replace OutboxSender with the real remote target (opts.Remote.Endpoint).
 		var sender remote.Sender = remote.OutboxSender{Path: opts.Remote.Outbox}
@@ -103,9 +134,25 @@ func run(opts config.Options) error {
 	if opts.WiFi.Enabled {
 		sources = append(sources, wifi.New(opts.WiFi))
 	}
+	if opts.NIC.Enabled {
+		sources = append(sources, nic.New(opts.NIC))
+	}
+	if opts.VPN.Enabled {
+		sources = append(sources, vpn.New(opts.VPN))
+	}
+	if opts.Probe.Enabled {
+		sources = append(sources, probe.New(opts.Probe))
+	}
 
 	log := bus.For("exmon")
 	log.Log("MONITOR", fmt.Sprintf("exmon started, logging to %s (Ctrl+C to stop)", fileSink.Path()))
+	if opts.ConfigFile != "" {
+		log.Log("MONITOR", "config: "+opts.ConfigFile)
+	} else {
+		log.Log("MONITOR", fmt.Sprintf("config: none found (looked in %s); using built-in defaults",
+			strings.Join(config.SearchPaths(), ", ")))
+	}
+	log.Log("DEVICE", dev.String())
 	describe(log, opts)
 	if len(sources) == 0 {
 		log.Log("MONITOR", "no sources enabled")
@@ -144,6 +191,14 @@ func run(opts config.Options) error {
 
 // describe logs which optional systems are running.
 func describe(log event.Logger, o config.Options) {
+	if o.Probe.Enabled {
+		trace := "off"
+		if pt := o.Probe.PathTrace; pt.IntervalMinutes > 0 || pt.OnIncident {
+			trace = fmt.Sprintf("every %dm, on incident %v", pt.IntervalMinutes, pt.OnIncident)
+		}
+		log.Log("MONITOR", fmt.Sprintf("probe: every %ds, %d dns name(s), %d endpoint(s), %d http test(s); path trace %s",
+			o.Probe.IntervalSeconds, len(o.Probe.DNSNames), len(o.Probe.Endpoints), len(o.Probe.HTTPTests), trace))
+	}
 	if o.Incident.Enabled {
 		log.Log("MONITOR", fmt.Sprintf("incidents: %d trigger(s), window %dm + %ds, saving to %s",
 			len(o.Incident.Triggers), o.Incident.WindowMinutes, o.Incident.PostTriggerSeconds, o.Incident.Dir))

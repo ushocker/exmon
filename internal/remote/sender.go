@@ -17,6 +17,7 @@ import (
 // successful send and saving our progress, the same batch is sent again.
 type Record struct {
 	ID    string      `json:"id"`
+	Host  string      `json:"host"` // computer name, so the remote knows which machine sent it
 	Event event.Event `json:"event"`
 }
 

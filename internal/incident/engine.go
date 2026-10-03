@@ -6,6 +6,7 @@ package incident
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ const checkInterval = 250 * time.Millisecond
 
 // capture is an incident that is still recording its post-trigger lines.
 type capture struct {
+	id      string // file name without .log.gz; also used by INCIDENT/hold and /release
 	rule    Rule
 	subject string
 	value   float64
@@ -35,6 +37,20 @@ type capture struct {
 	until   time.Time     // stop recording at this time
 	lines   []event.Event // window snapshot, then everything after the trigger
 	window  time.Duration // for the file header
+
+	// Holds: another component (e.g. the path tracer) can keep the capture open
+	// until its evidence is in, by publishing INCIDENT/hold and INCIDENT/release
+	// with id=<id>. holdUntil caps how long that may take.
+	holds     int
+	holdUntil time.Time
+}
+
+// due reports whether the capture should be saved now.
+func (c *capture) due(now time.Time) bool {
+	if now.Before(c.until) {
+		return false
+	}
+	return c.holds == 0 || !now.Before(c.holdUntil)
 }
 
 // Engine runs the rolling window and trigger rules. Start one with Start.
@@ -122,6 +138,44 @@ func (e *Engine) handle(ev event.Event) {
 	for _, c := range e.captures {
 		c.lines = append(c.lines, ev)
 	}
+	switch ev.Kind {
+	case KindHold, KindRelease:
+		e.holdOrRelease(ev)
+	}
+}
+
+// Kinds other components publish to keep an incident open while they gather
+// evidence for it. The detail must contain id=<incident id>.
+const (
+	KindHold    = "INCIDENT/hold"
+	KindRelease = "INCIDENT/release"
+)
+
+// IDFromDetail extracts the id=<value> token from an INCIDENT/* detail.
+func IDFromDetail(detail string) string {
+	for _, f := range strings.Fields(detail) {
+		if v, ok := strings.CutPrefix(f, "id="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func (e *Engine) holdOrRelease(ev event.Event) {
+	id := IDFromDetail(ev.Detail)
+	for _, c := range e.captures {
+		if c.id != id {
+			continue
+		}
+		if ev.Kind == KindHold {
+			if c.holds == 0 {
+				c.holdUntil = ev.Time.Add(time.Duration(e.cfg.MaxHoldSeconds) * time.Second)
+			}
+			c.holds++
+		} else if c.holds > 0 {
+			c.holds--
+		}
+	}
 }
 
 // evaluate checks one metrics event against every rule.
@@ -155,7 +209,9 @@ func (e *Engine) evaluate(ev event.Event) {
 }
 
 func (e *Engine) fire(r Rule, ev event.Event, v float64) {
+	id := fmt.Sprintf("incident-%s-sev%d-%s", ev.Time.Format("20060102-150405.000"), r.severity(), unsafeChars.ReplaceAllString(r.Name, "-"))
 	e.captures = append(e.captures, &capture{
+		id:      id,
 		rule:    r,
 		subject: ev.Subject,
 		value:   v,
@@ -167,11 +223,12 @@ func (e *Engine) fire(r Rule, ev event.Event, v float64) {
 	// Async: we are inside our own receive loop (see the rule on event.Bus).
 	// The event comes back to us through the bus and lands in the window and capture.
 	e.pub.PublishAsync(event.Event{
-		Source:  SourceName,
-		Kind:    "INCIDENT/triggered",
-		Subject: ev.Subject,
-		Detail: fmt.Sprintf("rule=%s source=%s subject=%q metric=%s value=%g op=%s threshold=%g",
-			r.Name, r.Source, ev.Subject, r.Metric, v, r.Op, r.Threshold),
+		Source:   SourceName,
+		Kind:     "INCIDENT/triggered",
+		Severity: r.severity(),
+		Subject:  ev.Subject,
+		Detail: fmt.Sprintf("id=%s sev=%d rule=%s source=%s subject=%q metric=%s value=%g op=%s threshold=%g",
+			id, r.severity(), r.Name, r.Source, ev.Subject, r.Metric, v, r.Op, r.Threshold),
 	})
 }
 
@@ -180,7 +237,7 @@ func (e *Engine) fire(r Rule, ev event.Event, v float64) {
 func (e *Engine) saveDue(now time.Time, all bool) {
 	keep := e.captures[:0] // reuse the same backing array while filtering
 	for _, c := range e.captures {
-		if !all && now.Before(c.until) {
+		if !all && !c.due(now) {
 			keep = append(keep, c)
 			continue
 		}

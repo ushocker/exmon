@@ -133,6 +133,7 @@ func TestWanted(t *testing.T) {
 		{event.Event{Source: "incident", Kind: "INCIDENT/saved"}, true},
 		{event.Event{Source: "wifi", Kind: event.KindMetrics}, false},
 		{event.Event{Source: "remote", Kind: "REMOTE/send_failed"}, false},
+		{event.Event{Source: "pathtrace", Kind: "INCIDENT/hold"}, false},
 	}
 	for _, tt := range tests {
 		if got := cfg.wanted(tt.e); got != tt.want {

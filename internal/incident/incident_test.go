@@ -228,3 +228,67 @@ func TestSubjectFilter(t *testing.T) {
 		t.Error("empty subject should match any")
 	}
 }
+
+func (h *harness) triggeredID(t *testing.T) string {
+	t.Helper()
+	h.waitFor(t, "INCIDENT/triggered")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, e := range h.seen {
+		if e.Kind == "INCIDENT/triggered" {
+			return IDFromDetail(e.Detail)
+		}
+	}
+	return ""
+}
+
+func (h *harness) has(kind string) bool {
+	for _, k := range h.kinds() {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func TestHoldKeepsCaptureOpenUntilRelease(t *testing.T) {
+	cfg := testConfig()
+	cfg.Triggers[0].ForSamples = 1
+	cfg.PostTriggerSeconds = 0
+	cfg.MaxHoldSeconds = 60
+	h := newHarness(t, cfg)
+	h.bus.For("wifi").Metrics("nic", map[string]float64{"rssi_dbm": -90})
+	id := h.triggeredID(t)
+	if !strings.HasPrefix(id, "incident-") || !strings.HasSuffix(id, "-weak") {
+		t.Fatalf("id = %q", id)
+	}
+
+	tracer := h.bus.For("pathtrace")
+	tracer.Log(KindHold, "id="+id)
+	time.Sleep(700 * time.Millisecond) // well past postTriggerSeconds=0
+	if h.has("INCIDENT/saved") {
+		t.Fatal("capture saved while held")
+	}
+	tracer.Log("PATHTRACE/hop", "evidence-line")
+	tracer.Log(KindRelease, "id="+id)
+	h.waitFor(t, "INCIDENT/saved")
+	h.stop()
+
+	text := readGz(t, filepath.Join(h.dir, id+".log.gz"))
+	if !strings.Contains(text, "evidence-line") {
+		t.Errorf("held evidence missing from incident file:\n%s", text)
+	}
+}
+
+func TestMaxHoldCutsOff(t *testing.T) {
+	cfg := testConfig()
+	cfg.Triggers[0].ForSamples = 1
+	cfg.PostTriggerSeconds = 0
+	cfg.MaxHoldSeconds = 1
+	h := newHarness(t, cfg)
+	h.bus.For("wifi").Metrics("nic", map[string]float64{"rssi_dbm": -90})
+	id := h.triggeredID(t)
+	h.bus.For("pathtrace").Log(KindHold, "id="+id) // never released
+	h.waitFor(t, "INCIDENT/saved")                 // saved anyway once maxHold passes
+	h.stop()
+}

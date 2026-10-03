@@ -100,3 +100,57 @@ func RadioStateName(s uint32) string {
 	}
 	return "unknown"
 }
+
+// AuthName names a DOT11_AUTH_ALGORITHM (windot11.h).
+func AuthName(a uint32) string {
+	switch a {
+	case 1:
+		return "Open"
+	case 2:
+		return "SharedKey"
+	case 3:
+		return "WPA-Enterprise"
+	case 4:
+		return "WPA-Personal"
+	case 6:
+		return "WPA2-Enterprise"
+	case 7:
+		return "WPA2-Personal"
+	case 8:
+		return "WPA3-Enterprise-192"
+	case 9:
+		return "WPA3-Personal"
+	case 10:
+		return "OWE"
+	case 11:
+		return "WPA3-Enterprise"
+	}
+	return "auth" + strconv.FormatUint(uint64(a), 10)
+}
+
+// CipherName names a DOT11_CIPHER_ALGORITHM (windot11.h).
+func CipherName(c uint32) string {
+	switch c {
+	case 0x00:
+		return "None"
+	case 0x01:
+		return "WEP40"
+	case 0x02:
+		return "TKIP"
+	case 0x04:
+		return "CCMP"
+	case 0x05:
+		return "WEP104"
+	case 0x06:
+		return "BIP"
+	case 0x08:
+		return "GCMP"
+	case 0x09:
+		return "GCMP-256"
+	case 0x0a:
+		return "CCMP-256"
+	case 0x101:
+		return "WEP"
+	}
+	return "cipher" + strconv.FormatUint(uint64(c), 10)
+}

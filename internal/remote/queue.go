@@ -71,7 +71,7 @@ func (q *Queue) appender() {
 		var recs []Record
 		add := func(e event.Event) { // a closure: a small function that can use the variables around it
 			if q.cfg.wanted(e) {
-				recs = append(recs, Record{ID: newID(), Event: e})
+				recs = append(recs, Record{ID: newID(), Host: q.cfg.Host, Event: e})
 			}
 		}
 		add(e)

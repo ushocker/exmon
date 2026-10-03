@@ -15,7 +15,10 @@ import (
 	"exmon/internal/baseline"
 	"exmon/internal/eventlog"
 	"exmon/internal/incident"
+	"exmon/internal/nic"
+	"exmon/internal/probe"
 	"exmon/internal/remote"
+	"exmon/internal/vpn"
 	"exmon/internal/wifi"
 )
 
@@ -28,6 +31,13 @@ type Options struct {
 	Incident incident.Config `json:"incident"`
 	Remote   remote.Config   `json:"remote"`
 	Baseline baseline.Config `json:"baseline"`
+	NIC      nic.Config      `json:"nic"`
+	VPN      vpn.Config      `json:"vpn"`
+	Probe    probe.Config    `json:"probe"`
+
+	// Not settings: what Load found or was asked to do.
+	ConfigFile         string `json:"-"` // the config file that was loaded; "" = built-in defaults
+	WriteDefaultConfig string `json:"-"` // set by --write-default-config: where to write a starter config
 }
 
 // Defaults returns the built-in settings.
@@ -38,6 +48,9 @@ func Defaults() Options {
 		Incident: incident.DefaultConfig(),
 		Remote:   remote.DefaultConfig(),
 		Baseline: baseline.DefaultConfig(),
+		NIC:      nic.DefaultConfig(),
+		VPN:      vpn.DefaultConfig(),
+		Probe:    probe.DefaultConfig(),
 	}
 }
 
@@ -50,7 +63,10 @@ func Load(args []string) (Options, error) {
 	// copied onto opts later, so an untyped flag never overwrites the JSON value.
 	ff := Defaults()
 	flags := flag.NewFlagSet("exmon", flag.ContinueOnError)
-	configPath := flags.String("config", defaultConfigPath(), "path to the JSON config file")
+	configPath := flags.String("config", "",
+		"JSON config file (default: exmon.json next to exmon.exe if present, else "+DefaultConfigPath+")")
+	writeDefault := flags.Bool("write-default-config", false,
+		"write a starter config to --config (or "+DefaultConfigPath+") and exit; never overwrites")
 
 	flags.StringVar(&ff.Log.Path, "log-path", ff.Log.Path, "log file (%VAR% is expanded)")
 	flags.IntVar(&ff.Log.MaxSizeMB, "log-max-size-mb", ff.Log.MaxSizeMB, "rotate the log at this size; 0 disables rotation")
@@ -82,15 +98,38 @@ func Load(args []string) (Options, error) {
 	flags.StringVar(&ff.Baseline.Path, "baseline-path", ff.Baseline.Path, "baseline .jsonl file")
 	flags.IntVar(&ff.Baseline.SummaryMinutes, "baseline-summary-minutes", ff.Baseline.SummaryMinutes, "how often baseline-summary.txt is rewritten")
 
+	flags.BoolVar(&ff.NIC.Enabled, "nic-enabled", ff.NIC.Enabled, "monitor network adapters")
+	flags.BoolVar(&ff.VPN.Enabled, "vpn-enabled", ff.VPN.Enabled, "detect VPN tunnels")
+	flags.BoolVar(&ff.Probe.Enabled, "probe-enabled", ff.Probe.Enabled, "run connectivity probes (DNS, gateway, endpoints, HTTP)")
+	flags.IntVar(&ff.Probe.IntervalSeconds, "probe-interval-seconds", ff.Probe.IntervalSeconds, "seconds between probe rounds")
+	flags.IntVar(&ff.Probe.PathTrace.IntervalMinutes, "probe-path-trace-minutes", ff.Probe.PathTrace.IntervalMinutes, "minutes between periodic path traces; 0 = off")
+
 	if err := flags.Parse(args); err != nil {
 		return opts, err
 	}
 
-	// Was --config typed? If so, a missing file is an error; otherwise it's optional.
-	configSet := false
-	flags.Visit(func(f *flag.Flag) { configSet = configSet || f.Name == "config" })
-	if err := loadFile(*configPath, &opts, configSet); err != nil {
-		return opts, err
+	// --write-default-config: just report where to write; main writes the file and exits.
+	if *writeDefault {
+		target := *configPath
+		if target == "" {
+			target = expand(DefaultConfigPath)
+		}
+		opts.WriteDefaultConfig = target
+		return opts, nil
+	}
+
+	// An explicit --config must exist. Otherwise use the first file found in the
+	// search order; with none, the built-in defaults apply.
+	if *configPath != "" {
+		if err := loadFile(*configPath, &opts); err != nil {
+			return opts, err
+		}
+		opts.ConfigFile = *configPath
+	} else if found := findConfig(SearchPaths()); found != "" {
+		if err := loadFile(found, &opts); err != nil {
+			return opts, err
+		}
+		opts.ConfigFile = found
 	}
 
 	// flags.Visit calls the function once for each flag that was actually set.
@@ -121,6 +160,11 @@ func Load(args []string) (Options, error) {
 		"baseline":                 func() { opts.Baseline.Enabled = ff.Baseline.Enabled },
 		"baseline-path":            func() { opts.Baseline.Path = ff.Baseline.Path },
 		"baseline-summary-minutes": func() { opts.Baseline.SummaryMinutes = ff.Baseline.SummaryMinutes },
+		"nic-enabled":              func() { opts.NIC.Enabled = ff.NIC.Enabled },
+		"vpn-enabled":              func() { opts.VPN.Enabled = ff.VPN.Enabled },
+		"probe-enabled":            func() { opts.Probe.Enabled = ff.Probe.Enabled },
+		"probe-interval-seconds":   func() { opts.Probe.IntervalSeconds = ff.Probe.IntervalSeconds },
+		"probe-path-trace-minutes": func() { opts.Probe.PathTrace.IntervalMinutes = ff.Probe.PathTrace.IntervalMinutes },
 	}
 	flags.Visit(func(f *flag.Flag) {
 		if set, ok := overrides[f.Name]; ok {
@@ -145,20 +189,74 @@ func (o Options) Validate() error {
 	if o.Log.Path == "" {
 		return errors.New("log path must be set")
 	}
-	if o.WiFi.PollSeconds < 1 {
-		return errors.New("wifi pollSeconds must be >= 1")
+	// A renamed metric would otherwise just never fire, so catch the old name.
+	for _, r := range o.Incident.Triggers {
+		if r.Source == "wifi" && r.Metric == "disconnects_30m" {
+			return fmt.Errorf("trigger %q: metric disconnects_30m was renamed to recent_disconnects (window set by wifi.disconnectWindowMinutes)", r.Name)
+		}
 	}
 	// errors.Join combines several errors into one (nil ones are ignored).
-	return errors.Join(o.Incident.Validate(), o.Remote.Validate(), o.Baseline.Validate())
+	return errors.Join(o.WiFi.Validate(), o.Incident.Validate(), o.Remote.Validate(), o.Baseline.Validate(), o.Probe.Validate())
+}
+
+// DefaultConfigPath is the machine-wide config location (%VAR% not yet expanded).
+const DefaultConfigPath = `%ProgramData%\exmon\config\exmon.json`
+
+// SearchPaths is where exmon looks for its config when --config isn't given, in
+// order: exmon.json next to the executable (handy for a portable copy), then the
+// machine-wide DefaultConfigPath. The working directory is not used: services
+// start in System32.
+func SearchPaths() []string {
+	var paths []string
+	if exe, err := os.Executable(); err == nil {
+		paths = append(paths, filepath.Join(filepath.Dir(exe), "exmon.json"))
+	}
+	return append(paths, expand(DefaultConfigPath))
+}
+
+// findConfig returns the first path that exists, or "".
+func findConfig(paths []string) string {
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+// WriteDefault writes content to path, creating its folder. It refuses to replace
+// an existing file, so an edited config is never lost.
+func WriteDefault(path string, content []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	// O_EXCL makes the open fail if the file already exists.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("%s already exists; delete or rename it first", path)
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// expand replaces %VAR% in s, leaving s as-is if that fails.
+func expand(s string) string {
+	if e, err := registry.ExpandString(s); err == nil {
+		return filepath.Clean(e)
+	}
+	return s
 }
 
 // loadFile reads the JSON file over opts. Keys missing from the file keep their
 // current (default) values, because json.Unmarshal only sets the fields it finds.
-func loadFile(path string, opts *Options, required bool) error {
+func loadFile(path string, opts *Options) error {
 	b, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) && !required {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
@@ -166,14 +264,4 @@ func loadFile(path string, opts *Options, required bool) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
-}
-
-// defaultConfigPath is exmon.json next to the executable. Services start in
-// System32, so the working directory is no good for finding it.
-func defaultConfigPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return "exmon.json"
-	}
-	return filepath.Join(filepath.Dir(exe), "exmon.json")
 }

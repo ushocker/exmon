@@ -1,5 +1,7 @@
 package wifi
 
+import "errors"
+
 // Config controls the Wi-Fi source.
 type Config struct {
 	Enabled           bool `json:"enabled"`
@@ -11,6 +13,8 @@ type Config struct {
 	ErrorPctThreshold int  `json:"errorPctThreshold"` // retry%/FCS% move (percentage points) that counts; 0 ignores them
 	MinStatsFrames    int  `json:"minStatsFrames"`    // frames needed before a retry%/FCS% is trusted
 	HeartbeatSeconds  int  `json:"heartbeatSeconds"`  // write a POLL line at least this often even with no change; 0 = off
+
+	DisconnectWindowMinutes int `json:"disconnectWindowMinutes"` // recent_disconnects counts disconnects this far back
 }
 
 // DefaultConfig returns the settings used when nothing else is configured.
@@ -23,5 +27,21 @@ func DefaultConfig() Config {
 		ErrorPctThreshold: 10,
 		MinStatsFrames:    500,
 		HeartbeatSeconds:  15,
+
+		DisconnectWindowMinutes: 30,
 	}
+}
+
+// Validate checks for settings that can't work.
+func (c Config) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.PollSeconds < 1 {
+		return errors.New("wifi pollSeconds must be >= 1")
+	}
+	if c.DisconnectWindowMinutes < 1 {
+		return errors.New("wifi disconnectWindowMinutes must be >= 1")
+	}
+	return nil
 }

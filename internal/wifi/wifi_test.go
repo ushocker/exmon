@@ -243,3 +243,40 @@ func TestHeartbeatKeepsChangeReference(t *testing.T) {
 		t.Error("slow drift across a heartbeat should still trip the RSSI threshold")
 	}
 }
+
+func TestRecentDisconnectsWindow(t *testing.T) {
+	p := newPoller(DefaultConfig())
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return now }
+
+	p.noteDisconnect("a")
+	now = now.Add(20 * time.Minute)
+	p.noteDisconnect("a")
+	p.noteDisconnect("b")
+	if got := p.recentDisconnects("a"); got != 2 {
+		t.Errorf("after 20m: %d, want 2", got)
+	}
+	now = now.Add(15 * time.Minute) // the first is now 35 minutes old
+	if got := p.recentDisconnects("a"); got != 1 {
+		t.Errorf("after 35m: %d, want 1", got)
+	}
+	if got := p.recentDisconnects("b"); got != 1 {
+		t.Errorf("other interface: %d, want 1", got)
+	}
+}
+
+func TestRecentDisconnectsCustomWindow(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.DisconnectWindowMinutes = 10
+	p := newPoller(cfg)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return now }
+	p.noteDisconnect("a")
+	now = now.Add(11 * time.Minute)
+	if got := p.recentDisconnects("a"); got != 0 {
+		t.Errorf("11 minutes later with a 10 minute window: %d, want 0", got)
+	}
+	if _, ok := metricDirections["recent_disconnects"]; !ok {
+		t.Error("metric should be named recent_disconnects")
+	}
+}

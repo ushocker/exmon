@@ -14,7 +14,46 @@
     "rateChangePercent": 50,
     "errorPctThreshold": 10,
     "minStatsFrames": 500,
-    "heartbeatSeconds": 15
+    "heartbeatSeconds": 15,
+    "disconnectWindowMinutes": 30
+  },
+  "nic": {
+    "enabled": true,
+    "pollSeconds": 15,
+    "heartbeatSeconds": 60,
+    "includeVirtual": false
+  },
+  "vpn": {
+    "enabled": true,
+    "pollSeconds": 30,
+    "heartbeatSeconds": 60,
+    "pingCount": 3,
+    "adapterPatterns": [
+      "Cisco AnyConnect", "GlobalProtect", "PANGP", "Palo Alto", "Zscaler", "Fortinet",
+      "FortiClient", "WireGuard", "OpenVPN", "TAP-Windows", "SonicWall", "Pulse Secure",
+      "Juniper", "Check Point", "Tailscale"
+    ],
+    "processNames": ["vpnui", "vpnagent", "PanGPA", "PanGPS", "ZSATunnel", "FortiClient", "dsNcService", "vpnc", "tailscaled"]
+  },
+  "probe": {
+    "enabled": true,
+    "intervalSeconds": 300,
+    "timeoutSeconds": 10,
+    "pingCount": 4,
+    "dnsNames": ["management.azure.com"],
+    "endpoints": [
+      { "name": "AzureFrontDoor", "target": "your-app.azurefd.net",              "port": 443 },
+      { "name": "SQLServer",      "target": "your-sql.database.windows.net",     "port": 1433 },
+      { "name": "StorageAccount", "target": "yourstorage.blob.core.windows.net", "port": 443 },
+      { "name": "M365Portal",     "target": "portal.office.com",                 "port": 443 }
+    ],
+    "httpTests": [
+      { "name": "ERP",         "url": "https://your-erp.azurewebsites.net/health" },
+      { "name": "M365",        "url": "https://outlook.office365.com" },
+      { "name": "SharePoint",  "url": "https://yourtenant.sharepoint.com" },
+      { "name": "InternalApp", "url": "https://your-app.azurefd.net" }
+    ],
+    "pathTrace": { "intervalMinutes": 30, "onIncident": true, "maxHops": 30 }
   },
   "incident": {
     "enabled": true,
@@ -23,10 +62,19 @@
     "postTriggerSeconds": 30,
     "cooldownSeconds": 300,
     "maxIncidents": 100,
+    "maxIncidentsBySeverity": { "1": 500, "2": 300, "3": 100, "4": 50, "5": 20 },
+    "maxHoldSeconds": 120,
     "triggers": [
-      { "name": "weak-signal",  "source": "wifi", "metric": "rssi_dbm",       "op": "<", "threshold": -75, "forSamples": 3 },
-      { "name": "high-retries", "source": "wifi", "metric": "retry_pct",      "op": ">", "threshold": 40,  "forSamples": 2 },
-      { "name": "handshake",    "source": "wifi", "metric": "handshake_fail", "op": ">", "threshold": 0 }
+      { "name": "weak-signal",      "source": "wifi",  "metric": "rssi_dbm",           "op": "<",  "threshold": -75,  "forSamples": 3, "severity": 3 },
+      { "name": "very-weak-signal", "source": "wifi",  "metric": "rssi_dbm",           "op": "<",  "threshold": -82,  "forSamples": 3, "severity": 1 },
+      { "name": "high-retries",     "source": "wifi",  "metric": "retry_pct",          "op": ">",  "threshold": 40,   "forSamples": 2, "severity": 4 },
+      { "name": "handshake",        "source": "wifi",  "metric": "handshake_fail",     "op": ">",  "threshold": 0,                     "severity": 2 },
+      { "name": "flapping",         "source": "wifi",  "metric": "recent_disconnects", "op": ">=", "threshold": 3,                     "severity": 2 },
+      { "name": "gateway-loss",     "source": "probe", "metric": "gateway_loss_pct",   "op": ">=", "threshold": 50,                    "severity": 1 },
+      { "name": "endpoint-down",    "source": "probe", "metric": "reachable",          "op": "<",  "threshold": 1,                     "severity": 2 },
+      { "name": "slow-http",        "source": "probe", "metric": "http_ttfb_ms",       "op": ">",  "threshold": 3000, "forSamples": 2, "severity": 4 },
+      { "name": "nic-errors",       "source": "nic",   "metric": "in_errors",          "op": ">",  "threshold": 100,                   "severity": 3 },
+      { "name": "vpn-dropped",      "source": "vpn",   "metric": "vpn_up",             "op": "<",  "threshold": 1,                     "severity": 2 }
     ]
   },
   "remote": {
@@ -42,7 +90,8 @@
     "retryMaxMinutes": 15,
     "include": [
       { "source": "wifi", "kinds": ["ACM/*", "MSM/*"] },
-      { "kinds": ["INCIDENT/*"] }
+      { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
+      { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed"] }
     ]
   },
   "baseline": {

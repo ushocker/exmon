@@ -50,8 +50,8 @@ func (s *Source) Run(ctx context.Context, log event.Logger) error {
 		if s.cfg.HeartbeatSeconds > 0 {
 			heartbeat = fmt.Sprintf("every %ds", s.cfg.HeartbeatSeconds)
 		}
-		log.Log("MONITOR", fmt.Sprintf("wifi: polls logged on change: RSSI >= %ddBm, rate >= %d%%, retry/FCS >= %dpts; heartbeat %s",
-			s.cfg.RSSIThreshold, s.cfg.RateChangePercent, s.cfg.ErrorPctThreshold, heartbeat))
+		log.Log("MONITOR", fmt.Sprintf("wifi: polls logged on change: RSSI >= %ddBm, rate >= %d%%, retry/FCS >= %dpts; heartbeat %s; recent_disconnects window %dm",
+			s.cfg.RSSIThreshold, s.cfg.RateChangePercent, s.cfg.ErrorPctThreshold, heartbeat, s.cfg.DisconnectWindowMinutes))
 	}
 
 	ticker := time.NewTicker(time.Duration(max(1, s.cfg.PollSeconds)) * time.Second)
@@ -89,6 +89,9 @@ func (s *Source) Run(ctx context.Context, log event.Logger) error {
 			}
 			return nil
 		case n := <-notes:
+			if n.Source == wlan.SourceACM && n.Code == wlan.ACMDisconnected {
+				p.noteDisconnect(n.Interface.String())
+			}
 			if kind, detail, ok := describe(n); ok {
 				log.Log(kind, detail)
 			}

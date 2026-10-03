@@ -212,7 +212,7 @@ func suggest(k metricKey, dir event.Direction, p func(float64) float64) string {
 	}
 	// No "subject": adapter names differ between machines, and a rule without one
 	// applies to every subject.
-	return fmt.Sprintf(`{ "name": "%s-%s-%s", "source": %q, "metric": %q, "op": %q, "threshold": %s, "forSamples": 3 }`,
+	return fmt.Sprintf(`{ "name": "%s-%s-%s", "source": %q, "metric": %q, "op": %q, "threshold": %s, "forSamples": 3, "severity": 3 }`,
 		k.source, k.metric, side, k.source, k.metric, op, num(th))
 }
 

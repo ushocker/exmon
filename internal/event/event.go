@@ -18,6 +18,9 @@ type Event struct {
 	Subject string             `json:"subject,omitempty"` // instance within the source, e.g. the adapter name
 	Detail  string             `json:"detail,omitempty"`
 	Metrics map[string]float64 `json:"metrics,omitempty"`
+
+	// Severity is set on incident events: 1 = most serious ... 5 = least. 0 = none.
+	Severity int `json:"severity,omitempty"`
 }
 
 // IsMetrics reports whether e is a measurement rather than a log line.
