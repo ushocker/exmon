@@ -12,7 +12,18 @@ See [Getting started](getting-started.md#where-exmon-looks-for-its-config) for h
 
 - **Lists replace, they don't merge.** If you set `"dnsNames": ["intranet.corp"]`, the default `www.microsoft.com` is gone. The same applies to `triggers`, `endpoints`, `httpTests`, `include`, `adapterPatterns`, `processNames` and `virtualPatterns`.
 - **Paths can use environment variables** written as `%NAME%`, for example `%ProgramData%`. This applies to `log.path`, `incident.dir`, `remote.outbox`, `remote.spoolDir` and `baseline.path`. In JSON, a backslash must be doubled: `"C:\\Logs\\exmon.log"`. Forward slashes also work.
-- **Errors stop startup.** exmon checks the whole configuration before it starts and exits with a message if something can't work, such as an unknown trigger operator or a severity of 7.
+- **Errors stop startup.** exmon checks the whole configuration before it starts and exits with a message if something can't work, such as an unknown trigger operator, a severity of 7, or a number outside its [allowed range](#allowed-ranges).
+- **Elevated runs only trust admin-controlled config.** When exmon runs as administrator (or as the service), it only uses a config file that only administrators can change. See [Troubleshooting](troubleshooting.md#exmon-exits-straight-away-with-a-config-error).
+
+## Service commands
+
+These come first on the command line, before any flags. See [Running as a Windows Service](service.md).
+
+| Command | Does |
+|---|---|
+| `exmon.exe install [flags…]` | Install or update the service (elevated). The flags are built into the service's command line. |
+| `exmon.exe uninstall` | Remove the service (elevated); files are kept. |
+| `exmon.exe status` | Show whether the service is installed and running. |
 
 ## Command-line flags
 
@@ -147,3 +158,39 @@ See [Baseline mode](baseline.md).
 | `summaryMinutes` | `15` | How often `baseline-summary.txt` (next to `path`) is rewritten. |
 | `maxSizeMB` | `100` | Rotation size for the baseline file. |
 | `maxFiles` | `5` | Rotated baseline files to keep. |
+
+## `outputRoots`: extra output folders (service only)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `outputRoots` | none | Folders, besides `%ProgramData%\exmon`, where the service may write its log, incidents, baseline and remote spool/outbox. Full paths; `%VAR%` allowed. See [Custom output locations](service.md#custom-output-locations). |
+
+## Allowed ranges
+
+Every number with a resource cost has a range, so a typo can't make exmon exhaust the machine. A value outside its range stops startup with a message such as `log.maxFiles 5000 is out of range 1-50`. All defaults are inside these ranges.
+
+| Setting | Allowed |
+|---|---|
+| `log.maxSizeMB` | 0–1024 (0 = no rotation) |
+| `log.maxFiles` | 1–50 |
+| `log.flushIntervalMs` | 100–60000 |
+| `wifi.pollSeconds` | 1–3600 |
+| `nic.pollSeconds`, `vpn.pollSeconds` | 5–3600 |
+| `vpn.pingCount`, `probe.pingCount` | 1–10 |
+| `probe.intervalSeconds` | 10–86400 |
+| `probe.timeoutSeconds` | 1–60 |
+| `probe.pathTrace.maxHops` | 1–64 |
+| `probe.endpoints`, `probe.httpTests` | at most 25 entries each |
+| `probe.dnsNames` | at most 10 entries |
+| `incident.windowMinutes` | 1–60 |
+| `incident.postTriggerSeconds`, `incident.maxHoldSeconds` | 0–600 |
+| `incident.triggers` | at most 100 entries |
+| `incident.maxIncidents`, each `maxIncidentsBySeverity` value | 0–10000 (0 = unlimited) |
+| `remote.batchSize` | 1–1000 |
+| `remote.maxSpoolMB` | 1–1024 |
+| `remote.segmentKB` | 64–16384 |
+| `baseline.summaryMinutes` | 1–1440 |
+| `baseline.maxSizeMB` | 1–1024 |
+| `baseline.maxFiles` | 1–50 |
+
+Ranges are only checked for features that are enabled.

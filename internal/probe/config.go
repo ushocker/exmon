@@ -1,9 +1,10 @@
 package probe
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
+
+	"exmon/internal/limits"
 )
 
 // Endpoint is a host checked with a TCP connect and ICMP pings.
@@ -56,8 +57,16 @@ func (c Config) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if c.IntervalSeconds < 10 {
-		return errors.New("probe intervalSeconds must be >= 10")
+	if err := limits.First(
+		limits.Range("probe.intervalSeconds", c.IntervalSeconds, 10, 86400),
+		limits.Range("probe.timeoutSeconds", c.TimeoutSeconds, 1, 60),
+		limits.Range("probe.pingCount", c.PingCount, 1, 10),
+		limits.Range("probe.pathTrace.maxHops", c.PathTrace.MaxHops, 1, 64),
+		limits.Count("probe.endpoints", len(c.Endpoints), 25),
+		limits.Count("probe.httpTests", len(c.HTTPTests), 25),
+		limits.Count("probe.dnsNames", len(c.DNSNames), 10),
+	); err != nil {
+		return err
 	}
 	for _, e := range c.Endpoints {
 		if e.Name == "" || e.Target == "" || e.Port < 1 || e.Port > 65535 {

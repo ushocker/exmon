@@ -5,6 +5,7 @@
 - Windows 10 or 11 (64-bit).
 - Go 1.27 or later to build it. The finished `exmon.exe` needs nothing else.
 - No administrator rights are needed for monitoring, pings or path traces. Writing to `%ProgramData%` needs rights to that folder; the defaults put everything under `%ProgramData%\exmon`.
+- Installing it as a Windows Service (`exmon.exe install`) needs an elevated prompt.
 
 ## Build
 
@@ -25,7 +26,9 @@ go test ./...
 exmon.exe
 ```
 
-exmon runs in the console until you press **Ctrl+C**. On Ctrl+C it stops the monitors, saves any incident that is still recording, flushes the log and exits. (Running as a Windows Service is planned but not built yet.)
+exmon runs in the console until you press **Ctrl+C**. On Ctrl+C it stops the monitors, saves any incident that is still recording, flushes the log and exits.
+
+To run it permanently, install it as a Windows Service from an elevated prompt with `exmon.exe install`. See [Running as a Windows Service](service.md).
 
 Every log line is also echoed to the console, so you can watch it work.
 
@@ -54,13 +57,15 @@ When you do not pass `--config`, exmon uses the first file that exists:
 1. `exmon.json` in the same folder as `exmon.exe` (handy for a portable copy).
 2. `%ProgramData%\exmon\config\exmon.json` (machine-wide).
 
-If neither exists it runs on built-in defaults. The second line of the log always says which file it loaded, or where it looked:
+If neither exists it runs on built-in defaults. One of the first log lines always says which file it loaded, or where it looked:
 
 ```
 MONITOR    config: C:\ProgramData\exmon\config\exmon.json
 ```
 
 If you pass `--config <path>`, that file must exist.
+
+**When running elevated or as the service**, exmon only uses a config file that only administrators can change. An untrusted `exmon.json` next to the exe is skipped with a warning; an untrusted file passed with `--config`, or in `%ProgramData%`, stops startup. This stops a standard user planting a config that would then run with administrator rights. A normal, non-elevated console doesn't apply this check. See [Running as a Windows Service](service.md#configuration).
 
 Command-line flags override the config file, which overrides the built-in defaults. See [Configuration](configuration.md).
 

@@ -157,3 +157,55 @@ func TestFormatLine(t *testing.T) {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 }
+
+func TestRefusesNonRegularLogPath(t *testing.T) {
+	cfg := testConfig(t)
+	if err := os.Mkdir(cfg.Path, 0o755); err != nil { // the "log file" is a folder
+		t.Fatal(err)
+	}
+	if _, err := StartFileSink(cfg, event.NewBus().Subscribe("x", 1, event.Blocking)); err == nil {
+		t.Error("a log path that is a folder should be refused")
+	}
+}
+
+// TestRotationOnlyTouchesItsOwnFiles checks rotation renames and deletes only
+// <base>.N<ext> in the log's own folder, and leaves everything else alone.
+func TestRotationOnlyTouchesItsOwnFiles(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.MaxSizeMB = 1
+	cfg.MaxFiles = 2
+	dir := filepath.Dir(cfg.Path)
+	bystanders := []string{"notes.txt", "test.log.bak", "test.x.log", "test.10.log", "other.1.log"}
+	for _, name := range bystanders {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("keep"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bus, s := start(t, cfg)
+	l := bus.For("test")
+	detail := strings.Repeat("x", 1000)
+	for i := 0; i < 4000; i++ { // several rotations
+		l.Log("FILL", detail)
+	}
+	bus.Close()
+	s.Wait()
+
+	for _, name := range bystanders {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || string(b) != "keep" {
+			t.Errorf("%s was touched by rotation (err %v)", name, err)
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		n := e.Name()
+		own := n == "test.log" || n == "test.1.log" || n == "test.2.log"
+		bystander := false
+		for _, b := range bystanders {
+			bystander = bystander || n == b
+		}
+		if !own && !bystander {
+			t.Errorf("unexpected file %s after rotation", n)
+		}
+	}
+}

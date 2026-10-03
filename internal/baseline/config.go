@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"exmon/internal/eventlog"
+	"exmon/internal/limits"
 )
 
 // Config controls baseline mode.
@@ -36,10 +37,11 @@ func (c Config) Validate() error {
 	if c.Path == "" {
 		return errors.New("baseline path must be set")
 	}
-	if c.SummaryMinutes < 1 {
-		return errors.New("baseline summaryMinutes must be >= 1")
-	}
-	return nil
+	return limits.First(
+		limits.Range("baseline.summaryMinutes", c.SummaryMinutes, 1, 1440),
+		limits.Range("baseline.maxSizeMB", c.MaxSizeMB, 1, 1024),
+		limits.Range("baseline.maxFiles", c.MaxFiles, 1, 50),
+	)
 }
 
 // SinkConfig is the eventlog.FileSink setup for the baseline file: JSON lines,

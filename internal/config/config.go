@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/windows/registry"
 
@@ -18,6 +19,7 @@ import (
 	"exmon/internal/nic"
 	"exmon/internal/probe"
 	"exmon/internal/remote"
+	"exmon/internal/safepath"
 	"exmon/internal/vpn"
 	"exmon/internal/wifi"
 )
@@ -35,9 +37,14 @@ type Options struct {
 	VPN      vpn.Config      `json:"vpn"`
 	Probe    probe.Config    `json:"probe"`
 
+	// OutputRoots are extra folders the service may write its outputs to, besides
+	// %ProgramData%\exmon (see CheckOutputs). Console mode doesn't use them.
+	OutputRoots []string `json:"outputRoots,omitempty"`
+
 	// Not settings: what Load found or was asked to do.
-	ConfigFile         string `json:"-"` // the config file that was loaded; "" = built-in defaults
-	WriteDefaultConfig string `json:"-"` // set by --write-default-config: where to write a starter config
+	ConfigFile         string   `json:"-"` // the config file that was loaded; "" = built-in defaults
+	ConfigWarnings     []string `json:"-"` // config files skipped because they failed the trust check
+	WriteDefaultConfig string   `json:"-"` // set by --write-default-config: where to write a starter config
 }
 
 // Defaults returns the built-in settings.
@@ -57,6 +64,22 @@ func Defaults() Options {
 // Load builds the configuration from defaults < JSON file < command-line flags.
 // args are the command-line arguments without the program name (os.Args[1:]).
 func Load(args []string) (Options, error) {
+	return LoadWith(args, nil)
+}
+
+// TrustFunc decides whether a config file may be used; it returns nil to accept it.
+// The service uses one that only accepts files administrators control.
+type TrustFunc func(path string) error
+
+// LoadWith is Load with a trust check on the config file (nil = trust everything,
+// which is right for console mode: you run exmon as yourself).
+//
+//   - An untrusted --config file is an error.
+//   - In the search, an untrusted exmon.json next to the exe is skipped with a
+//     warning (recorded in Options.ConfigWarnings) and the search continues.
+//   - An untrusted machine-wide config is an error: running a config someone may
+//     have tampered with is worse than not starting.
+func LoadWith(args []string, trust TrustFunc) (Options, error) {
 	opts := Defaults()
 
 	// The flags write into a separate copy. Only flags the user actually typed are
@@ -121,15 +144,27 @@ func Load(args []string) (Options, error) {
 	// An explicit --config must exist. Otherwise use the first file found in the
 	// search order; with none, the built-in defaults apply.
 	if *configPath != "" {
+		if trust != nil {
+			if err := trust(*configPath); err != nil {
+				return opts, fmt.Errorf("refusing config %s: %w", *configPath, err)
+			}
+		}
 		if err := loadFile(*configPath, &opts); err != nil {
 			return opts, err
 		}
 		opts.ConfigFile = *configPath
-	} else if found := findConfig(SearchPaths()); found != "" {
-		if err := loadFile(found, &opts); err != nil {
+	} else {
+		found, warnings, err := searchTrusted(SearchPaths(), trust)
+		opts.ConfigWarnings = warnings
+		if err != nil {
 			return opts, err
 		}
-		opts.ConfigFile = found
+		if found != "" {
+			if err := loadFile(found, &opts); err != nil {
+				return opts, err
+			}
+			opts.ConfigFile = found
+		}
 	}
 
 	// flags.Visit calls the function once for each flag that was actually set.
@@ -173,7 +208,11 @@ func Load(args []string) (Options, error) {
 	})
 
 	// Expand %VAR% in every path. A slice of pointers lets one loop update them all.
-	for _, p := range []*string{&opts.Log.Path, &opts.Incident.Dir, &opts.Remote.Outbox, &opts.Remote.SpoolDir, &opts.Baseline.Path} {
+	paths := []*string{&opts.Log.Path, &opts.Incident.Dir, &opts.Remote.Outbox, &opts.Remote.SpoolDir, &opts.Baseline.Path}
+	for i := range opts.OutputRoots {
+		paths = append(paths, &opts.OutputRoots[i])
+	}
+	for _, p := range paths {
 		expanded, err := registry.ExpandString(*p)
 		if err != nil {
 			return opts, fmt.Errorf("expanding %q: %w", *p, err)
@@ -184,11 +223,56 @@ func Load(args []string) (Options, error) {
 	return opts, opts.Validate()
 }
 
+// output is one configured output location, for CheckOutputs.
+type output struct{ setting, path string }
+
+// outputs lists the output paths that are in use with these settings.
+func (o Options) outputs() []output {
+	out := []output{{"log.path", o.Log.Path}}
+	if o.Incident.Enabled {
+		out = append(out, output{"incident.dir", o.Incident.Dir})
+	}
+	if o.Remote.Enabled {
+		out = append(out, output{"remote.spoolDir", o.Remote.SpoolDir}, output{"remote.outbox", o.Remote.Outbox})
+	}
+	if o.Baseline.Enabled {
+		out = append(out, output{"baseline.path", o.Baseline.Path})
+	}
+	return out
+}
+
+// CheckOutputs is the service's containment check. Every output path in use must
+// be inside dataDir (%ProgramData%\exmon) or one of OutputRoots, and no folder or
+// file on the way from that root may be a junction or symbolic link. Otherwise a
+// mistaken path could make the service rename, delete or write files elsewhere.
+func (o Options) CheckOutputs(dataDir string) error {
+	roots := append([]string{dataDir}, o.OutputRoots...)
+	for _, r := range o.OutputRoots {
+		if !filepath.IsAbs(r) {
+			return fmt.Errorf("outputRoots entry %q must be a full path such as D:\\Logs\\exmon", r)
+		}
+	}
+	for _, out := range o.outputs() {
+		root := ""
+		for _, r := range roots {
+			if safepath.Within(r, out.path) {
+				root = r
+				break
+			}
+		}
+		if root == "" {
+			return fmt.Errorf("%s %s is outside the allowed output folders (%s); add its folder to outputRoots",
+				out.setting, out.path, strings.Join(roots, ", "))
+		}
+		if err := safepath.CheckNoLinks(root, out.path); err != nil {
+			return fmt.Errorf("%s: %w", out.setting, err)
+		}
+	}
+	return nil
+}
+
 // Validate checks for settings that can't work.
 func (o Options) Validate() error {
-	if o.Log.Path == "" {
-		return errors.New("log path must be set")
-	}
 	// A renamed metric would otherwise just never fire, so catch the old name.
 	for _, r := range o.Incident.Triggers {
 		if r.Source == "wifi" && r.Metric == "disconnects_30m" {
@@ -196,7 +280,8 @@ func (o Options) Validate() error {
 		}
 	}
 	// errors.Join combines several errors into one (nil ones are ignored).
-	return errors.Join(o.WiFi.Validate(), o.Incident.Validate(), o.Remote.Validate(), o.Baseline.Validate(), o.Probe.Validate())
+	return errors.Join(o.Log.Validate(), o.WiFi.Validate(), o.NIC.Validate(), o.VPN.Validate(),
+		o.Probe.Validate(), o.Incident.Validate(), o.Remote.Validate(), o.Baseline.Validate())
 }
 
 // DefaultConfigPath is the machine-wide config location (%VAR% not yet expanded).
@@ -216,12 +301,31 @@ func SearchPaths() []string {
 
 // findConfig returns the first path that exists, or "".
 func findConfig(paths []string) string {
-	for _, p := range paths {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
+	found, _, _ := searchTrusted(paths, nil)
+	return found
+}
+
+// searchTrusted returns the first existing path that passes trust. Every path but
+// the last is optional: if it fails the check it is skipped with a warning. The last
+// (the machine-wide config) failing the check is an error.
+func searchTrusted(paths []string, trust TrustFunc) (found string, warnings []string, err error) {
+	for i, p := range paths {
+		if st, statErr := os.Stat(p); statErr != nil || st.IsDir() {
+			continue
 		}
+		if trust == nil {
+			return p, warnings, nil
+		}
+		terr := trust(p)
+		if terr == nil {
+			return p, warnings, nil
+		}
+		if i == len(paths)-1 {
+			return "", warnings, fmt.Errorf("refusing config %s: %w", p, terr)
+		}
+		warnings = append(warnings, fmt.Sprintf("ignored config %s: %v", p, terr))
 	}
-	return ""
+	return "", warnings, nil
 }
 
 // WriteDefault writes content to path, creating its folder. It refuses to replace

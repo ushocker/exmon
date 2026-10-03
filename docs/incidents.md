@@ -2,8 +2,8 @@
 
 An **incident** is a snapshot of everything exmon logged around a problem. When a trigger rule fires, exmon:
 
-1. copies the **rolling window**: the last `windowMinutes` (default 10) of log lines from *all* monitors;
-2. keeps recording for `postTriggerSeconds` (default 30), plus however long a path trace takes (see below);
+1. copies the **rolling window**: the last `windowMinutes` (default 10, at most 60) of log lines from *all* monitors;
+2. keeps recording for `postTriggerSeconds` (default 30, at most 600), plus however long a path trace takes (see below);
 3. writes it all to a compressed file such as `incident-20261003-104715.253-sev1-weak-signal.log.gz` in `incident.dir`;
 4. logs `INCIDENT/triggered` and `INCIDENT/saved` lines. These can be forwarded to the [remote target](remote.md).
 

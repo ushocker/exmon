@@ -2,6 +2,8 @@
 
 The `probe` monitor actively tests the network every `probe.intervalSeconds` (default 300, i.e. 5 minutes). Each round runs all probes at the same time, each with its own timeout (`timeoutSeconds`, default 10), so one slow target never delays the others. The first round runs at startup.
 
+There can be at most 25 endpoints, 25 HTTP tests and 10 DNS names; other limits are in [Allowed ranges](../configuration.md#allowed-ranges).
+
 Every probe writes a line each round. These lines double as the status output, so you always have the latest numbers.
 
 ## DNS

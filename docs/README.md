@@ -2,7 +2,7 @@
 
 `exmon` is a Windows network monitor. It runs continuously, watches Wi-Fi, network adapters, VPN tunnels and connectivity to the services you care about, and writes everything to one rotating log file. When something crosses a threshold you set, it saves a compressed **incident** file containing the minutes before and after the problem, and it can forward selected events to a remote target through a queue that survives reboots.
 
-It is a single Windows executable written in Go, with no runtime dependencies and no installer.
+It is a single Windows executable written in Go, with no runtime dependencies. Run it in a console, or install it as a Windows Service with `exmon.exe install`.
 
 ## What it does
 
@@ -16,12 +16,14 @@ It is a single Windows executable written in Go, with no runtime dependencies an
 | Incidents | Threshold triggers with severities; each incident saved as a `.log.gz` holding the rolling window plus what happened after | [Incidents](incidents.md) |
 | Remote queue | Selected events forwarded to a remote target through an on-disk spool with retries and backoff | [Remote queue](remote.md) |
 | Baseline mode | Records every measurement and suggests trigger thresholds from what is normal on this machine | [Baseline mode](baseline.md) |
+| Windows Service | Runs at startup as a low-privilege service with locked-down folders; install, upgrade and uninstall from the exe | [Running as a Windows Service](service.md) |
 
 ## Where to start
 
 1. [Getting started](getting-started.md): build, run, create a config, and read the log.
-2. [Configuration](configuration.md): every setting and command-line flag.
-3. [Incidents](incidents.md): turn on alerting for the problems you care about.
+2. [Running as a Windows Service](service.md): install, upgrade, uninstall, event log, permissions.
+3. [Configuration](configuration.md): every setting and command-line flag.
+4. [Incidents](incidents.md): turn on alerting for the problems you care about.
 
 ## Reference
 
@@ -30,8 +32,14 @@ It is a single Windows executable written in Go, with no runtime dependencies an
 - [Files exmon writes](reference/files.md): where everything goes on disk.
 - [Troubleshooting](troubleshooting.md): known driver quirks and common questions.
 
+## Design proposals (not implemented)
+
+- [Control plane](design/control-plane.md): cloud-delivered config, remote updates over MQTT, direct-to-SIEM events. Records the decisions made so far.
+- [Config security review](design/config-security-review.md): how config values could be misused in the current setup (local config, console or service), and the proposed fixes.
+- [Cloud config security](design/cloud-config-security.md): extra risks and mitigations if the config were ever delivered from the cloud. Not applicable today.
+
 ## For developers
 
 - [Architecture](architecture.md): how the pieces fit together, and how to add a new monitor or consumer.
 - `CLAUDE.md` in the repository root has the coding conventions.
-- `reference/` holds the original C# (WlanWatch) and PowerShell (AzureNetMonitor) implementations this was ported from. It is kept for reference and is not built.
+- `reference/csharp/` holds the original C# implementation (WlanWatch) this was ported from. It is kept for reference and is not built. The network detections came from a PowerShell script (AzureNetMonitor) that is kept locally in `reference/Powershell/` but not committed to the repository.

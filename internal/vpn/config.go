@@ -1,5 +1,7 @@
 package vpn
 
+import "exmon/internal/limits"
+
 // Config controls VPN detection. The pattern and process lists come from the
 // AzureNetMonitor script; add your organisation's VPN client names.
 type Config struct {
@@ -25,4 +27,15 @@ func DefaultConfig() Config {
 		},
 		ProcessNames: []string{"vpnui", "vpnagent", "PanGPA", "PanGPS", "ZSATunnel", "FortiClient", "dsNcService", "vpnc", "tailscaled"},
 	}
+}
+
+// Validate checks the settings are in a sensible range.
+func (c Config) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	return limits.First(
+		limits.Range("vpn.pollSeconds", c.PollSeconds, 5, 3600),
+		limits.Range("vpn.pingCount", c.PingCount, 1, 10),
+	)
 }

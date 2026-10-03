@@ -1,5 +1,7 @@
 package nic
 
+import "exmon/internal/limits"
+
 // Config controls the network adapter monitor.
 type Config struct {
 	Enabled          bool     `json:"enabled"`
@@ -21,4 +23,12 @@ func DefaultConfig() Config {
 			"PANGP", "Cisco AnyConnect", "Zscaler", "Fortinet", "Juniper", "Tailscale",
 		},
 	}
+}
+
+// Validate checks the settings are in a sensible range.
+func (c Config) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	return limits.Range("nic.pollSeconds", c.PollSeconds, 5, 3600)
 }

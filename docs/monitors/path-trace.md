@@ -15,7 +15,7 @@ The `probe.endpoints`, or the `probe.dnsNames` if no endpoints are configured. A
 
 ## How it works
 
-For each target, exmon sends pings with TTL 1, 2, 3 … up to `maxHops` (default 30) **all at once**, three per hop, with a one-second timeout. Each router whose TTL runs out answers, which identifies the hop. The trace stops at the first hop where the target itself answers. Answering hops get a reverse-DNS name when one exists.
+For each target, exmon sends pings with TTL 1, 2, 3 … up to `maxHops` (default 30, at most 64) **all at once**, three per hop, with a one-second timeout. Each router whose TTL runs out answers, which identifies the hop. The trace stops at the first hop where the target itself answers. Answering hops get a reverse-DNS name when one exists.
 
 Because every hop is probed in parallel, a full trace usually takes 1–3 seconds. A classic `tracert` takes 30–60 seconds per target. No administrator rights are needed.
 

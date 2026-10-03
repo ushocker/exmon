@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `exmon` is a Windows-only Go program that runs long-lived monitors ("sources") and writes their events to one rotating log file through an async queue. Sources: Wi-Fi (`wlanapi.dll`), network adapters, VPN detection and connectivity probes (iphlpapi/rasapi32), all through `golang.org/x/sys/windows`. There is no cgo.
 
-It was ported from the C# WlanWatch in `reference/csharp/`; the NIC/VPN/probe detections come from the PowerShell script in `reference/Powershell/` (its Azure Log Analytics/credential parts were deliberately not ported). Leave `reference/` untouched. Console mode only for now; running as a Windows Service (`ServiceInstaller.cs`) is a later pass. The owner is new to Go, so explain Go-specific idioms when introducing them.
+It was ported from the C# WlanWatch in `reference/csharp/`; the NIC/VPN/probe detections come from the PowerShell script in `reference/Powershell/` (its Azure Log Analytics/credential parts were deliberately not ported). Leave `reference/` untouched. It runs in a console or as a Windows Service (`exmon.exe install`; LocalService with the `NT SERVICE\exmon` SID; see `docs/service.md`). The owner is new to Go, so explain Go-specific idioms when introducing them.
 
 User and developer documentation lives in `docs/` (start at `docs/README.md`). When you add or change a feature, setting, log kind or metric, update the matching page: `docs/configuration.md`, `docs/monitors/*`, `docs/reference/metrics.md`, `docs/reference/log-format.md`.
 
@@ -22,6 +22,9 @@ go run . --remote-simulate-offline                     # test remote retries/red
 go run . --probe-interval-seconds 30                   # faster probe rounds while testing (default 300)
 go run . --write-default-config                        # write exmon.example.json (embedded in the exe) to %ProgramData%\exmon\config\exmon.json
 go run . -h         # list flags
+exmon.exe install [flags]   # elevated: copy to Program Files, install/update + start the service
+exmon.exe uninstall         # elevated: remove the service (files kept)
+exmon.exe status            # service state (no elevation needed)
 ```
 
 ## Architecture
@@ -38,7 +41,8 @@ Sources publish to a fan-out bus; every consumer gets its own copy of each event
 ```
 
 ```
-main.go               load config → subscribe consumers → run sources → Ctrl+C → engine.Flush → bus.Close → wait consumers (log file last)
+main.go               subcommands (install/uninstall/status) | service (svc.IsWindowsService) | console → run(ctx, opts, asService, ready, warn): subscribe consumers → run sources → ctx cancelled (Ctrl+C or service Stop) → engine.Flush → bus.Close → wait consumers (log file last)
+internal/service      SCM install/uninstall/status, folder DACLs, config Trust check, svc.Handler (StartPending→Running→StopPending checkpoints), Application event log
 internal/event        Event, Logger (Log / Metrics / DeclareMetrics), Bus (Subscribe, Publish, PublishAsync, Close)
 internal/eventlog     FileSink: one writer goroutine owns the file (bufio, flush ticker, rotation, echo); text or jsonl
 internal/window       rolling window of events (single owner, no mutex)
@@ -49,6 +53,9 @@ internal/source       Source interface: Name(), Run(ctx, log) — blocks until c
 internal/config       Options composes each package's Config; defaults < config file < flags. Config file: --config, else exmon.json next to the exe, else %ProgramData%\exmon\config\exmon.json (first found wins; logged at startup)
 internal/wlan         Win32 WLAN layer (unsafe allowed); returns plain Go values
 internal/winnet       Win32 network layer (unsafe allowed): adapters, counters, routes, ICMP ping with TTL, uncached DNS, RAS, interface notifications, processes
+internal/winsys       Win32 security/session layer (unsafe allowed): ApplyDACL, AdminOnlyWritable (owner + DACL walk; read-only OWNER RIGHTS neutralises the owner), ConsoleUser (WTS), IsElevated
+internal/limits       Range/Count/First helpers for config upper bounds
+internal/safepath     Within (case-insensitive containment), CheckNoLinks (refuse junctions/symlinks below a root)
 internal/device       computer/user/domain/model/OS, logged as DEVICE at startup, in incident headers, `host` on remote records
 internal/wifi         Wi-Fi Source: notifications + poll ticker in one select loop; start/restart with backoff
 internal/nic          adapter up/down/changed (event-driven) + counters, NIC/status heartbeat
@@ -75,7 +82,7 @@ internal/probe        every intervalSeconds: DNS (uncached), gateway ping, endpo
 ## Adding a source
 
 1. Create `internal/<name>` with a `Config` struct, `DefaultConfig()`, and a type implementing `source.Source`.
-2. Add a field to `config.Options`, its default in `config.Defaults`, and `--<name>-...` flags (plus an `overrides` entry) in `config.Load`.
+2. Add a field to `config.Options`, its default in `config.Defaults`, and `--<name>-...` flags (plus an `overrides` entry) in `config.Load`. Give it a `Validate()` with ranges (`internal/limits`) called from `Options.Validate`; if it writes files, add the path to `Options.outputs()` for the service containment check.
 3. Add one `if opts.X.Enabled { sources = append(...) }` line in `main.go`.
 4. To make it triggerable: call `log.DeclareMetrics(...)` once, then `log.Metrics(subject, ...)` each sample. Triggers, the window, the remote queue and the baseline work with it automatically.
 
@@ -87,7 +94,9 @@ Subscribe in `main.go` before sources start (`bus.Subscribe(name, busBuffer, eve
 
 - Readability first. Wrap each raw `proc.Call(...)` in a small, named Go function with typed parameters that returns `(result, error)`. Callers never see `uintptr`/`unsafe.Pointer`.
 - `exmon.example.json` is embedded into the exe (`//go:embed` in `main.go`) as the `--write-default-config` starter; keep it valid (a config test loads it). With `go run`, the exe lives in a go-build temp folder, so "next to the exe" only matters for a built/installed exe.
-- Only `internal/wlan` and `internal/winnet` may use `unsafe`/`uintptr`. Prefer a `golang.org/x/sys/windows` wrapper when one exists; hand-bind only what's missing (winnet binds `IcmpSendEcho2` and `RasEnumConnectionsW`).
+- Only `internal/wlan`, `internal/winnet` and `internal/winsys` may use `unsafe`/`uintptr`. Prefer a `golang.org/x/sys/windows` wrapper when one exists; hand-bind only what's missing (winnet binds `IcmpSendEcho2` and `RasEnumConnectionsW`; winsys binds `WTSQuerySessionInformationW`).
+- Config trust: the service and an **elevated** console load with `config.LoadWith(args, service.Trust)` (admin-only file and folder); a non-elevated console uses no check (`consoleTrust` in `main.go`). The service also runs `opts.CheckOutputs(service.DataDir())`: outputs must be inside `%ProgramData%\exmon` or `outputRoots`, with no junctions/links (`internal/safepath`). Errors before the log file opens go to the Application event log (source `exmon`). Console echo is off.
+- Every resource-costing number has a range, checked in its package's `Validate()` with `internal/limits` (`Range`, `Count`, `First`). When adding a setting, give it a range there and add it to `docs/configuration.md#allowed-ranges` and `internal/config/limits_test.go`.
 - Win32 WLAN functions return a Win32 error code directly (0 = success). Use `check(fn, r)` in `wlan/errors.go`; ignore `proc.Call`'s `err` return. Not every API follows this: `IcmpSendEcho2` returns a reply count, and 0 means "see GetLastError" (which may be an IP_STATUS such as a timeout).
 - `ras.h` packs its structs to 4 bytes (`RASCONNW` is 1388 bytes on x64); mirror an 8-byte handle as `[8]byte` to get that layout. Layout tests live next to each package.
 - Memory Windows allocates must be freed with `freeMemory` (WlanFreeMemory) before returning; copy anything you keep.

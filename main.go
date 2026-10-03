@@ -23,9 +23,11 @@ import (
 	"exmon/internal/nic"
 	"exmon/internal/probe"
 	"exmon/internal/remote"
+	"exmon/internal/service"
 	"exmon/internal/source"
 	"exmon/internal/vpn"
 	"exmon/internal/wifi"
+	"exmon/internal/winsys"
 )
 
 // busBuffer is how many events each consumer can fall behind before Publish waits.
@@ -38,13 +40,36 @@ const busBuffer = 4096
 var starterConfig []byte
 
 func main() {
-	opts, err := config.Load(os.Args[1:])
+	// Service management subcommands come first: exmon.exe install|uninstall|status.
+	if len(os.Args) > 1 {
+		if cmd, ok := subcommands[os.Args[1]]; ok {
+			if err := cmd(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	// Started by the Service Control Manager: run as the exmon service.
+	if service.IsService() {
+		if err := service.Run(runService); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Otherwise: console mode.
+	opts, err := config.LoadWith(os.Args[1:], consoleTrust(winsys.IsElevated()))
 	if errors.Is(err, flag.ErrHelp) {
 		return
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		os.Exit(2)
+	}
+	for _, w := range opts.ConfigWarnings {
+		fmt.Fprintln(os.Stderr, "warning:", w)
 	}
 	if opts.WriteDefaultConfig != "" {
 		if err := config.WriteDefault(opts.WriteDefaultConfig, starterConfig); err != nil {
@@ -55,16 +80,75 @@ func main() {
 		fmt.Println("edit it (at least the probe endpoints and httpTests), then run exmon")
 		return
 	}
-	if err := run(opts); err != nil {
+	// ctx is cancelled when Ctrl+C is pressed.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := run(ctx, opts, false, func() {}, func(string) {}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(opts config.Options) error {
+// consoleTrust picks the config trust check for console mode. A normal console runs
+// with the user's own rights, so any config is fine. An elevated (administrator)
+// console must not run a config a standard user could have planted, so it gets the
+// same admin-only check as the service.
+func consoleTrust(elevated bool) config.TrustFunc {
+	if elevated {
+		return service.Trust
+	}
+	return nil
+}
+
+// subcommands are the service management commands, chosen by the first argument.
+var subcommands = map[string]func(args []string) error{
+	"install":   func(args []string) error { return service.Install(args, os.Stdout) },
+	"uninstall": func([]string) error { return service.Uninstall(os.Stdout) },
+	"status":    func([]string) error { return service.Status(os.Stdout) },
+}
+
+// runService is exmon as the Windows Service runs it. The flags come from the
+// service's command line (baked in at install). Config files are only used if only
+// administrators can change them, and problems before the log file opens are written
+// to the Windows event log, since a service has no console.
+func runService(ctx context.Context, ready func(), elog service.EventLog) error {
+	opts, err := config.LoadWith(os.Args[1:], service.Trust)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	// Outputs must stay inside %ProgramData%\exmon or an outputRoots folder, with no
+	// junctions or links on the way, so a wrong path can't touch other files.
+	if err := opts.CheckOutputs(service.DataDir()); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	opts.Log.Echo = false // nobody sees the console of a service
+	warn := func(msg string) { elog.Warning(service.EventWarning, msg) }
+	for _, w := range opts.ConfigWarnings {
+		warn(w)
+	}
+	if exe, err := os.Executable(); err == nil {
+		if err := service.Trust(exe); err != nil {
+			warn("exmon.exe could be replaced by non-administrators: " + err.Error())
+		}
+	}
+	started := func() {
+		cfg := opts.ConfigFile
+		if cfg == "" {
+			cfg = "none (built-in defaults)"
+		}
+		elog.Info(service.EventStarted, "exmon started; config: "+cfg+"; log: "+opts.Log.Path)
+		ready()
+	}
+	return run(ctx, opts, true, started, warn)
+}
+
+// run is exmon itself, in console or service mode. It calls ready once the
+// monitors have started and returns after ctx is cancelled and everything has shut
+// down. warn reports problems somewhere visible (the event log for a service).
+func run(ctx context.Context, opts config.Options, asService bool, ready func(), warn func(string)) error {
 	bus := event.NewBus()
-	dev := device.Get()
-	opts.Incident.Device = dev.String()
+	dev := device.Get(asService)
+	opts.Incident.Device = func() string { return dev.Refresh(asService).String() }
 	opts.Remote.Host = dev.Computer
 
 	// Consumers subscribe before anything is published. Each adds a "wait" function
@@ -145,7 +229,14 @@ func run(opts config.Options) error {
 	}
 
 	log := bus.For("exmon")
-	log.Log("MONITOR", fmt.Sprintf("exmon started, logging to %s (Ctrl+C to stop)", fileSink.Path()))
+	if asService {
+		log.Log("MONITOR", fmt.Sprintf("exmon service started, logging to %s", fileSink.Path()))
+	} else {
+		log.Log("MONITOR", fmt.Sprintf("exmon started, logging to %s (Ctrl+C to stop)", fileSink.Path()))
+	}
+	for _, w := range opts.ConfigWarnings {
+		log.Log("WARNING", w)
+	}
 	if opts.ConfigFile != "" {
 		log.Log("MONITOR", "config: "+opts.ConfigFile)
 	} else {
@@ -158,10 +249,6 @@ func run(opts config.Options) error {
 		log.Log("MONITOR", "no sources enabled")
 	}
 
-	// ctx is cancelled when Ctrl+C is pressed.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	// A WaitGroup counts running goroutines; Wait blocks until the count is back to 0.
 	var wg sync.WaitGroup
 	for _, src := range sources {
@@ -170,9 +257,11 @@ func run(opts config.Options) error {
 			defer wg.Done()
 			if err := src.Run(ctx, bus.For(src.Name())); err != nil {
 				log.Log("ERROR", fmt.Sprintf("%s: %v", src.Name(), err))
+				warn(fmt.Sprintf("%s: %v", src.Name(), err))
 			}
 		}()
 	}
+	ready() // monitors are running (each retries on its own if Windows isn't ready yet)
 	wg.Wait()
 
 	// Shutdown order matters:

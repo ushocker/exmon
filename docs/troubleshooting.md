@@ -1,5 +1,26 @@
 # Troubleshooting
 
+## The service won't start, or stops straight away
+
+Look in the Application event log, source `exmon`. Anything that stops the service starting is written there, because the exmon log may not be open yet:
+
+```powershell
+Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='exmon'} -MaxEvents 20 | Format-List TimeCreated, LevelDisplayName, Message
+```
+
+Common causes:
+
+- **`refusing config …: … can be changed by …`**: the config file, or its folder, can be changed by non-administrators, so the service won't trust it. Recreate it from an elevated prompt inside `%ProgramData%\exmon\config` (that folder's permissions make admin-created files trusted), or run `exmon.exe install` again to reset the folder permissions.
+- **`… is outside the allowed output folders`**: a log, incident, baseline or spool path is outside `%ProgramData%\exmon`. Add its folder to `outputRoots` and grant the service write access (`icacls <folder> /grant "NT SERVICE\exmon:(OI)(CI)M"`), or use the default locations. See [Custom output locations](service.md#custom-output-locations).
+- **`… is a junction or link; exmon won't write through it`**: a folder on the way to an output is a junction or symbolic link. Point the setting at the real folder instead.
+- **An invalid config**: the same message you would see in the console. Test it with `exmon.exe --config <file>` in a console first.
+
+Windows restarts a failed service three times (after 5s, 10s and 30s), then gives up until the next day or the next manual start.
+
+## HTTP probes fail only when running as a service
+
+The service account (LocalService) doesn't use your personal proxy settings and can't sign in to an authenticating proxy. Set `HTTPS_PROXY` for the service, or allow the probe targets directly. See [Running as a Windows Service](service.md#what-differs-under-localservice).
+
 ## The log is quiet. Is it working?
 
 Most monitors only write when something changes, plus heartbeat lines:
@@ -28,6 +49,8 @@ The whole configuration is checked at startup. The message names the problem, fo
 - `trigger 2: weak: op "=" must be one of < <= > >=`
 - `metric disconnects_30m was renamed to recent_disconnects`: update the trigger.
 - `severity 7 must be 1 (most serious) to 5`
+- `log.maxFiles 5000 is out of range 1-50`: every number has an allowed range (see [Configuration](configuration.md#allowed-ranges)).
+- `refusing config …: … can be changed by …`, when running **elevated** (as administrator): an elevated console only uses a config that only administrators can change, the same rule as the service. This stops a config planted by a standard user running with admin rights. Run `exmon.exe install` once to lock down `%ProgramData%\exmon`, or keep the config in a folder only administrators can change.
 - A JSON syntax error with the file name. Common causes are a missing comma, a trailing comma, or a single backslash in a path (use `\\` or `/`).
 
 ## Probes report PROBE/down for targets I didn't add

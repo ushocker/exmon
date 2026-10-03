@@ -45,6 +45,12 @@ func StartFileSink(cfg Config, events <-chan event.Event) (*FileSink, error) {
 		return nil, err
 	}
 	cfg.Path = abs
+	// Rotation renames and deletes files next to the log, so refuse to start on
+	// anything that isn't an ordinary file (a folder, a link, a device...).
+	// Lstat looks at the entry itself without following links.
+	if st, err := os.Lstat(cfg.Path); err == nil && !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("log file %s exists but is not a regular file", cfg.Path)
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
 		return nil, err
 	}

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"exmon/internal/event"
+
+	"exmon/internal/limits"
 )
 
 // Config controls the remote queue.
@@ -62,10 +64,15 @@ func (c Config) Validate() error {
 	switch {
 	case c.SpoolDir == "":
 		return errors.New("remote spoolDir must be set")
-	case c.BatchSize < 1:
-		return errors.New("remote batchSize must be >= 1")
 	case c.RetryInitialSeconds < 1 || c.RetryMaxMinutes < 1:
 		return errors.New("remote retryInitialSeconds and retryMaxMinutes must be >= 1")
+	}
+	if err := limits.First(
+		limits.Range("remote.batchSize", c.BatchSize, 1, 1000),
+		limits.Range("remote.maxSpoolMB", c.MaxSpoolMB, 1, 1024),
+		limits.Range("remote.segmentKB", c.SegmentKB, 64, 16384),
+	); err != nil {
+		return err
 	}
 	for _, s := range c.Include {
 		if s.SeverityAtLeast < 0 || s.SeverityAtLeast > 5 {

@@ -1,6 +1,10 @@
 package wifi
 
-import "errors"
+import (
+	"errors"
+
+	"exmon/internal/limits"
+)
 
 // Config controls the Wi-Fi source.
 type Config struct {
@@ -37,11 +41,8 @@ func (c Config) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if c.PollSeconds < 1 {
-		return errors.New("wifi pollSeconds must be >= 1")
-	}
 	if c.DisconnectWindowMinutes < 1 {
 		return errors.New("wifi disconnectWindowMinutes must be >= 1")
 	}
-	return nil
+	return limits.Range("wifi.pollSeconds", c.PollSeconds, 1, 3600)
 }

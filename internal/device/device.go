@@ -10,6 +10,8 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+
+	"exmon/internal/winsys"
 )
 
 // Info identifies this machine.
@@ -27,11 +29,15 @@ func (i Info) String() string {
 }
 
 // Get reads the device information. Fields that can't be read are left empty.
-func Get() Info {
+//
+// When exmon runs as a service, the process user is the service account, so User is
+// instead the person logged on at the console ("" if nobody is). Use Refresh to
+// re-read it later, since people log on and off while the service runs.
+func Get(asService bool) Info {
 	host, _ := os.Hostname()
 	return Info{
 		Computer: host,
-		User:     os.Getenv("USERNAME"),
+		User:     currentUser(asService),
 		Domain:   computerName(windows.ComputerNameDnsDomain),
 		Model:    model(),
 		OS:       osVersion(),
@@ -51,6 +57,20 @@ func model() string {
 		}
 	}
 	return m
+}
+
+// Refresh returns a copy with User re-read (the only field that changes while
+// exmon runs).
+func (i Info) Refresh(asService bool) Info {
+	i.User = currentUser(asService)
+	return i
+}
+
+func currentUser(asService bool) string {
+	if asService {
+		return winsys.ConsoleUser()
+	}
+	return os.Getenv("USERNAME")
 }
 
 // computerName wraps GetComputerNameEx for one of the COMPUTER_NAME_FORMAT values.

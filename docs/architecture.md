@@ -53,7 +53,7 @@ The bus stamps the time when the event is published, not when it is written to d
 
 `main.go`:
 
-1. Ctrl+C cancels a `context.Context`; each source's `Run` returns.
+1. Ctrl+C (console) or a service Stop/Shutdown request cancels a `context.Context`; each source's `Run` returns.
 2. `engine.Flush()` saves incidents still recording, while the bus can still deliver their `INCIDENT/saved` events.
 3. `bus.Close()` closes every subscription channel.
 4. Each consumer drains its channel and stops. The log file goes last, so the final lines are written.
@@ -62,8 +62,12 @@ The bus stamps the time when the event is published, not when it is written to d
 
 | Package | Role |
 |---|---|
-| `main.go` | Loads config, wires consumers and sources, handles shutdown; embeds `exmon.example.json` for `--write-default-config`. |
-| `internal/config` | `Options` composes each package's `Config`. Load order: defaults, then config file, then flags. Finds the config file and validates everything. |
+| `main.go` | Chooses the mode: `install`/`uninstall`/`status` subcommands, service (started by the SCM) or console. Loads the config with the right trust check (`consoleTrust`: admin-only files when elevated or a service) and, for the service, runs `CheckOutputs`. Then `run(ctx, …)` wires consumers and sources and handles shutdown. Embeds `exmon.example.json` for `--write-default-config`. |
+| `internal/service` | Install/uninstall/status through the Service Control Manager, folder permissions, the config trust check, and the `svc.Handler` that reports start/running/stopping to Windows and writes to the Application event log. |
+| `internal/winsys` | Windows security and session wrapper: set folder permissions, check that a path is admin-only, find the console user, check elevation. A third `unsafe` package. |
+| `internal/config` | `Options` composes each package's `Config`. Load order: defaults, then config file, then flags. Finds the config file (`LoadWith` takes a trust check), validates everything, and `CheckOutputs` keeps the service's outputs inside allowed folders. |
+| `internal/limits` | `Range`, `Count` and `First`: the upper/lower bounds every section's `Validate()` uses. |
+| `internal/safepath` | `Within` (is a path inside a folder) and `CheckNoLinks` (no junctions or symbolic links below a folder). |
 | `internal/event` | `Event`, `Logger`, `Bus`. |
 | `internal/eventlog` | `FileSink`: one goroutine owns the file (buffered writes, periodic flush, rotation, console echo). Text or JSONL. |
 | `internal/window` | The rolling window (single owner, no locking). |
@@ -77,7 +81,7 @@ The bus stamps the time when the event is published, not when it is written to d
 | `internal/probe` | Probe source (DNS, gateway, endpoints, HTTP) and `Tracer` (path trace consumer). |
 | `internal/device` | Machine description for the DEVICE line, incident headers and remote `host`. |
 | `internal/wlan` | Windows WLAN API wrapper. One of only two packages allowed to use `unsafe`. |
-| `internal/winnet` | Windows networking wrapper: adapters, counters, routes, ICMP ping with TTL, uncached DNS, RAS, interface-change notifications, processes. The other `unsafe` package. |
+| `internal/winnet` | Windows networking wrapper: adapters, counters, routes, ICMP ping with TTL, uncached DNS, RAS, interface-change notifications, processes. Also allowed `unsafe`. |
 
 ## Windows API layers
 
@@ -91,7 +95,7 @@ The bus stamps the time when the event is published, not when it is written to d
 ## Adding a monitor
 
 1. Create `internal/<name>` with a `Config` struct, `DefaultConfig()`, and a type with `Name()` and `Run(ctx, log event.Logger) error`. `Run` must return when `ctx` is cancelled.
-2. Add the config to `config.Options` and `config.Defaults`. Add flags and an `overrides` entry in `config.Load`, and validation in `Options.Validate`.
+2. Add the config to `config.Options` and `config.Defaults`. Add flags and an `overrides` entry in `config.Load`. Give the section a `Validate()` that puts **every resource-costing number in a range** (`internal/limits`), call it from `Options.Validate`, and add the ranges to `docs/configuration.md#allowed-ranges` and `internal/config/limits_test.go`. If it writes files, add its path to `Options.outputs()` so the service's containment check covers it.
 3. Add one `if opts.X.Enabled { sources = append(...) }` line in `main.go`.
 4. Log lines with `log.Log`. To make it triggerable, call `log.DeclareMetrics` once and then `log.Metrics(subject, …)` on each sample. Triggers, the window, incidents, the remote queue and baseline mode then work with it automatically.
 5. Document it in `docs/monitors/`, `docs/reference/metrics.md` and `docs/reference/log-format.md`, and add an example to `exmon.example.json`.

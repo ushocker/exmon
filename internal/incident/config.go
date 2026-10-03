@@ -1,6 +1,10 @@
 package incident
 
-import "fmt"
+import (
+	"fmt"
+
+	"exmon/internal/limits"
+)
 
 // Config controls the rolling window and incident triggers.
 type Config struct {
@@ -16,9 +20,9 @@ type Config struct {
 	// them into this Go map's int keys for us. 0 = unlimited.
 	MaxIncidentsBySeverity map[int]int `json:"maxIncidentsBySeverity,omitempty"`
 
-	MaxHoldSeconds int    `json:"maxHoldSeconds"` // longest an INCIDENT/hold can keep a capture open
-	Device         string `json:"-"`              // device description for the file header (set by main)
-	Triggers       []Rule `json:"triggers"`
+	MaxHoldSeconds int           `json:"maxHoldSeconds"` // longest an INCIDENT/hold can keep a capture open
+	Device         func() string `json:"-"`              // device description for the file header (set by main); read when each file is written
+	Triggers       []Rule        `json:"triggers"`
 }
 
 // DefaultConfig returns the settings used when nothing else is configured.
@@ -51,12 +55,21 @@ func (c Config) Validate() error {
 	if c.Dir == "" {
 		return fmt.Errorf("incident dir must be set")
 	}
-	if c.WindowMinutes < 1 {
-		return fmt.Errorf("incident windowMinutes must be >= 1")
+	if err := limits.First(
+		limits.Range("incident.windowMinutes", c.WindowMinutes, 1, 60),
+		limits.Range("incident.postTriggerSeconds", c.PostTriggerSeconds, 0, 600),
+		limits.Range("incident.maxHoldSeconds", c.MaxHoldSeconds, 0, 600),
+		limits.Range("incident.maxIncidents", c.MaxIncidents, 0, 10000),
+		limits.Count("incident.triggers", len(c.Triggers), 100),
+	); err != nil {
+		return err
 	}
 	for sev, n := range c.MaxIncidentsBySeverity {
-		if sev < 1 || sev > MaxSeverity || n < 0 {
-			return fmt.Errorf("incident maxIncidentsBySeverity: severity %d must be 1-%d and its limit >= 0", sev, MaxSeverity)
+		if sev < 1 || sev > MaxSeverity {
+			return fmt.Errorf("incident maxIncidentsBySeverity: severity %d must be 1-%d", sev, MaxSeverity)
+		}
+		if err := limits.Range(fmt.Sprintf("incident.maxIncidentsBySeverity[%d]", sev), n, 0, 10000); err != nil {
+			return err
 		}
 	}
 	names := map[string]bool{}

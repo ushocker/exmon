@@ -1,5 +1,11 @@
 package eventlog
 
+import (
+	"errors"
+
+	"exmon/internal/limits"
+)
+
 // Config controls where and how log lines are written.
 //
 // The `json:"..."` text after each field is a struct tag: encoding/json reads it to
@@ -23,4 +29,16 @@ func DefaultConfig() Config {
 		FlushIntervalMs: 1000,
 		Echo:            true,
 	}
+}
+
+// Validate checks the log settings are in a sensible range.
+func (c Config) Validate() error {
+	if c.Path == "" {
+		return errors.New("log path must be set")
+	}
+	return limits.First(
+		limits.Range("log.maxSizeMB", c.MaxSizeMB, 0, 1024),
+		limits.Range("log.maxFiles", c.MaxFiles, 1, 50),
+		limits.Range("log.flushIntervalMs", c.FlushIntervalMs, 100, 60000),
+	)
 }

@@ -54,7 +54,11 @@ func (e *Engine) writeFile(c *capture) (string, error) {
 	fmt.Fprintf(w, "# value:     %g\r\n", c.value)
 	fmt.Fprintf(w, "# triggered: %s\r\n", c.at.Format("2006-01-02 15:04:05.000"))
 	fmt.Fprintf(w, "# captured:  %v before, until %s\r\n", c.window, time.Now().Format("2006-01-02 15:04:05.000"))
-	fmt.Fprintf(w, "# device:    %s\r\n", e.cfg.Device)
+	device := ""
+	if e.cfg.Device != nil {
+		device = e.cfg.Device() // read now: the logged-on user may have changed since startup
+	}
+	fmt.Fprintf(w, "# device:    %s\r\n", device)
 	fmt.Fprintf(w, "# lines:     %d\r\n\r\n", len(c.lines))
 	for _, ev := range c.lines {
 		fmt.Fprintf(w, "%s\r\n", eventlog.FormatLine(ev.Time, ev.Kind, ev.Detail))
