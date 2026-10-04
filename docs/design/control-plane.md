@@ -25,7 +25,7 @@ Event delivery is **not** part of the control plane: events go straight to the S
 | 7 | **Update verification is layered.** Signed manifest (version only goes up, expiry, group) → download host on a local allow-list → size limit → SHA-256 → Authenticode valid **and** from our pinned publisher → swap → health check → roll back on failure. | A hash in a message only proves the download matches the message. The signature is the security boundary. Pinning the publisher stops "any validly signed exe" being accepted, and the version check stops downgrades to old signed builds. |
 | 8 | **No secrets in the binary or in plain config.** Device credentials come from enrollment and are protected with DPAPI or the TPM. SIEM ingest tokens are either per device or encrypted to the device's key. | The exe is public and the config is saved to disk. |
 | 9 | **The cloud document can't set everything.** The whole config comes from the cloud, but its document has no fields for filesystem paths or control-plane identity and URLs. Those come from the binary or from install-time flags. Everything else (thresholds, triggers, intervals, probe targets, selectors) is cloud-managed within limits built into the binary. | A limit inside the config would be set by the same party it's meant to limit. See [Cloud config security](cloud-config-security.md) C1–C3. |
-| 10 | **Prerequisites before any of this:** Windows Service mode (done), the local fixes in the [Config security review](config-security-review.md#roadmap), and the built-in limits in [Cloud config security](cloud-config-security.md#c2-traffic-abuse-at-fleet-scale). | Updating needs service control, and a cloud config must not be able to exceed what the binary allows. |
+| 10 | **Prerequisites before any of this:** Windows Service mode (done), the local fixes in the [Config security review](config-security-review.md#summary) (done), and the built-in limits in [Cloud config security](cloud-config-security.md#c2-traffic-abuse-at-fleet-scale). | Updating needs service control, and a cloud config must not be able to exceed what the binary allows. |
 
 ## Architecture
 
@@ -129,7 +129,7 @@ Rollouts move through rings (e.g. `ring-canary` → `ring-early` → `ring-broad
 ## Suggested phases
 
 1. **Windows Service mode** (install/uninstall, recovery options). *Done.*
-2. **Local hardening** from the [Config security review](config-security-review.md#roadmap) (elevated console trust check, numeric limits, output containment). Worth doing even without a cloud.
+2. **Local hardening** from the [Config security review](config-security-review.md#summary) (elevated console trust check, numeric limits, output containment). *Done.*
 3. **SIEM `Sender`** (HTTPS ingest), with a locally configured endpoint first.
 4. **Built-in cloud limits** from [Cloud config security](cloud-config-security.md) (rate limit, link-local deny, redirect cap, a cloud document without path fields).
 5. **Enrollment and identity.**

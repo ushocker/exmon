@@ -15,7 +15,7 @@ So the protections here are either built into the binary, or set by a **differen
 
 ## C1. Cloud-delivered paths
 
-Locally, output paths are contained (see [F2](config-security-review.md#f2-output-paths-can-rename-delete-or-write-files--fixed-defence-in-depth)). From the cloud, they shouldn't be settable at all:
+Locally, output paths are contained (see [F2](config-security-review.md#f2-output-paths-could-rename-delete-or-write-files--fixed-defence-in-depth)). From the cloud, they shouldn't be settable at all:
 
 - The cloud document is decoded into its own struct that **has no path fields**: no `log.path`, `incident.dir`, `remote.spoolDir`, `remote.outbox`, `baseline.path` or `outputRoots`. Paths come from the binary's defaults, or from flags baked into the service at install.
 - Because the fields don't exist, a cloud config can't set them even by mistake. With strict decoding (C4), trying to is an error.
