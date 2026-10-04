@@ -42,4 +42,3 @@ It is a single Windows executable written in Go, with no runtime dependencies. R
 
 - [Architecture](architecture.md): how the pieces fit together, and how to add a new monitor or consumer.
 - `CLAUDE.md` in the repository root has the coding conventions.
-- `reference/csharp/` holds the original C# implementation (WlanWatch) this was ported from. It is kept for reference and is not built. The network detections came from a PowerShell script (AzureNetMonitor) that is kept locally in `reference/Powershell/` but not committed to the repository.
