@@ -32,11 +32,16 @@ One JSON object per event:
 
 ```json
 "include": [
-  { "source": "wifi", "kinds": ["ACM/*", "MSM/*"] },
+  { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "ACM/scan_fail",
+                                "MSM/connected", "MSM/disconnected", "MSM/roaming_start", "MSM/roaming_end", "MSM/radio_state_change"] },
   { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
-  { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed"] }
+  { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] }
 ]
 ```
+
+This is the selection in the starter config (`--write-default-config`). It sends Wi-Fi connects, disconnects, failures and roams, but not the background chatter.
+
+**Avoid `"ACM/*"` for Wi-Fi.** Windows scans for networks about once a minute, so `ACM/*` also matches `ACM/scan_complete`, `ACM/scan_list_refresh` and `ACM/network_available`. On a test machine these were about 99% of everything forwarded: roughly 1,400 events per machine per day, none of them useful. List the kinds you want instead. See [Data usage](data-usage.md) for what each choice costs across a fleet. `MSM/*` is quieter, but it also includes `MSM/associating`, `MSM/authenticating` and similar steps of every connection, plus `MSM/link_degraded` / `MSM/link_improved` on some drivers.
 
 | Field | Meaning |
 |---|---|

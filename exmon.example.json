@@ -89,7 +89,7 @@
     "retryInitialSeconds": 5,
     "retryMaxMinutes": 15,
     "include": [
-      { "source": "wifi", "kinds": ["ACM/*", "MSM/*"] },
+      { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "ACM/scan_fail", "MSM/connected", "MSM/disconnected", "MSM/roaming_start", "MSM/roaming_end", "MSM/radio_state_change"] },
       { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
       { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] }
     ]
