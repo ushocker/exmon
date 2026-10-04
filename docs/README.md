@@ -31,6 +31,7 @@ It is a single Windows executable written in Go, with no runtime dependencies. R
 - [Log format and event kinds](reference/log-format.md): what each log line means.
 - [Metrics](reference/metrics.md): every metric that triggers and the baseline can use.
 - [Files exmon writes](reference/files.md): where everything goes on disk.
+- [Data usage](data-usage.md): how much the remote queue would send per machine and per fleet (1,000 / 3,000 / 5,000 machines), with and without incidents.
 - [Troubleshooting](troubleshooting.md): known driver quirks and common questions.
 
 ## Design proposals (not implemented)
