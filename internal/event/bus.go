@@ -35,7 +35,25 @@ type Bus struct {
 	closed bool
 	subs   []*subscriber
 	dirs   map[string]map[string]Direction // source -> metric -> direction
+
+	// The gate: while holding is true, events from monitors are marked Held.
+	// atomic types let any goroutine read and change them without the mutex.
+	holding   atomic.Bool
+	heldCount atomic.Uint64
 }
+
+// Hold starts marking monitor events as Held (see Event.Held).
+func (b *Bus) Hold() { b.holding.Store(true) }
+
+// Release stops holding events and returns how many were held since the last
+// Release.
+func (b *Bus) Release() uint64 {
+	b.holding.Store(false)
+	return b.heldCount.Swap(0)
+}
+
+// Holding reports whether events are currently being held.
+func (b *Bus) Holding() bool { return b.holding.Load() }
 
 // NewBus creates an empty bus.
 func NewBus() *Bus {
@@ -118,24 +136,42 @@ func (b *Bus) Direction(source, metric string) Direction {
 	return b.dirs[source][metric] // reading a missing map key gives the zero value: DirectionUnknown
 }
 
-// For returns a Logger that stamps every event with the given source name.
+// For returns a Logger that stamps every event with the given source name. Its
+// events are marked Held while the bus is holding.
 func (b *Bus) For(source string) Logger {
+	return sourceLogger{bus: b, source: source, holdable: true}
+}
+
+// ForUnheld is For, but its events are never held. It is for exmon's own lifecycle
+// lines (startup, power), which must always be live.
+func (b *Bus) ForUnheld(source string) Logger {
 	return sourceLogger{bus: b, source: source}
 }
 
 type sourceLogger struct {
-	bus    *Bus
-	source string
+	bus      *Bus
+	source   string
+	holdable bool
+}
+
+func (l sourceLogger) publish(e Event) {
+	if l.holdable && l.bus.holding.Load() {
+		e.Held = true
+		l.bus.heldCount.Add(1)
+	}
+	l.bus.Publish(e)
 }
 
 func (l sourceLogger) Log(kind, detail string) {
-	l.bus.Publish(Event{Source: l.source, Kind: kind, Detail: detail})
+	l.publish(Event{Source: l.source, Kind: kind, Detail: detail})
 }
 
 func (l sourceLogger) Metrics(subject string, m map[string]float64) {
 	// Copy the map: the caller may reuse theirs, and consumers read ours later.
-	l.bus.Publish(Event{Source: l.source, Kind: KindMetrics, Subject: subject, Metrics: maps.Clone(m)})
+	l.publish(Event{Source: l.source, Kind: KindMetrics, Subject: subject, Metrics: maps.Clone(m)})
 }
+
+func (l sourceLogger) Held() bool { return l.holdable && l.bus.holding.Load() }
 
 func (l sourceLogger) DeclareMetrics(dirs map[string]Direction) {
 	l.bus.mu.Lock()

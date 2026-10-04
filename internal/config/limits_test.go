@@ -53,3 +53,19 @@ func TestDefaultsWithinLimits(t *testing.T) {
 		t.Errorf("defaults fail validation: %v", err)
 	}
 }
+
+func TestPowerLimits(t *testing.T) {
+	dir := t.TempDir()
+	for _, tt := range []struct{ json, setting string }{
+		{`{"power": {"maxWaitSeconds": 5}}`, "power.maxWaitSeconds"},
+		{`{"power": {"settleSeconds": 9999}}`, "power.settleSeconds"},
+		{`{"power": {"checkSeconds": 0}}`, "power.checkSeconds"},
+		{`{"power": {"testURL": "ftp://x"}}`, "power.testURL"},
+	} {
+		p := filepath.Join(dir, "c.json")
+		os.WriteFile(p, []byte(tt.json), 0o644)
+		if _, err := Load([]string{"--config", p}); err == nil || !strings.Contains(err.Error(), tt.setting) {
+			t.Errorf("%s: got %v", tt.setting, err)
+		}
+	}
+}

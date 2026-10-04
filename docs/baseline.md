@@ -63,4 +63,6 @@ Treat them as a starting point:
 - **Set `severity`** to fit the impact (see [Incidents](incidents.md#severity)).
 - **Keep `forSamples` at 2–3** for noisy metrics.
 
+Held events (from while the machine was starting, waking or shutting down) are written to `baseline.jsonl` with `"held": true` but left out of the summary, so wake-ups don't skew the percentiles.
+
 Metrics without a "bad direction" (such as `rx_bps`) appear in the table but get no suggestion. Percentiles are based on a random sample of up to 10,000 values per metric, so memory stays small even if baseline mode runs for weeks.

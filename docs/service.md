@@ -74,7 +74,7 @@ Files an administrator creates in the config folder pass the check automatically
     Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='exmon'} -MaxEvents 20 | Format-List TimeCreated, LevelDisplayName, Message
     ```
 
-On Stop or shutdown the service shuts down the same way as Ctrl+C in the console: incidents still recording are saved, the remote queue gets a last send attempt, and the final log lines are written.
+The service asks Windows for **pre-shutdown** notice, which arrives while the network is still up, so it starts holding events before the network is torn down (see [Startup, sleep and shutdown](power.md)). On Stop or shutdown the service shuts down the same way as Ctrl+C in the console: incidents still recording are saved, the remote queue gets a last send attempt, and the final log lines are written.
 
 ## The logged-on user
 

@@ -115,7 +115,11 @@ func (s *FileSink) format(e event.Event) string {
 		}
 		return string(b)
 	}
-	return FormatLine(e.Time, e.Kind, e.Detail)
+	detail := e.Detail
+	if e.Held {
+		detail += " [held]" // logged while starting, waking or shutting down; see Event.Held
+	}
+	return FormatLine(e.Time, e.Kind, detail)
 }
 
 func (s *FileSink) write(e event.Event) {

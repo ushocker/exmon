@@ -40,8 +40,11 @@ A source gets an `event.Logger` from `bus.For("<source>")`, which has three meth
 - `Log(kind, detail)`: a log line.
 - `Metrics(subject, map)`: a `METRICS` event. It is never written to the text log; triggers and the baseline use it.
 - `DeclareMetrics(map[name]Direction)`: says which way is bad for each metric (`LowIsBad` / `HighIsBad`), for baseline suggestions.
+- `Held()`: whether events are currently being held (see below). Sources that report state changes use it to re-announce their state once events are live again (the probe source does).
 
 The bus stamps the time when the event is published, not when it is written to disk.
+
+**The hold gate.** `Bus.Hold()` / `Bus.Release()` mark every event from a `bus.For(...)` logger as `Held` in between; `bus.ForUnheld(...)` loggers (exmon's own lines, `power`) are never held. `internal/power` drives the gate at startup, sleep/wake and shutdown ([Startup, sleep and shutdown](power.md)). Consumers decide what held means: the file sink marks `[held]`, the incident engine skips held metrics, the remote queue never forwards them, the baseline summary ignores them. A new consumer that alarms or forwards should check `Event.Held` too.
 
 ## The bus
 
@@ -66,6 +69,7 @@ The bus stamps the time when the event is published, not when it is written to d
 | `internal/service` | Install/uninstall/status through the Service Control Manager, folder permissions, the config trust check, and the `svc.Handler` that reports start/running/stopping to Windows and writes to the Application event log. |
 | `internal/winsys` | Windows security and session wrapper: set folder permissions, check that a path is admin-only, find the console user, check elevation. A third `unsafe` package. |
 | `internal/config` | `Options` composes each package's `Config`. Load order: defaults, then config file, then flags. Finds the config file (`LoadWith` takes a trust check), validates everything, and `CheckOutputs` keeps the service's outputs inside allowed folders. |
+| `internal/power` | The hold gate's driver: Windows suspend/resume notifications (`winsys.WatchPower`), clock-jump detection, the readiness check (default route + connection test), `Shutdown` on stop. |
 | `internal/limits` | `Range`, `Count` and `First`: the upper/lower bounds every section's `Validate()` uses. |
 | `internal/safepath` | `Within` (is a path inside a folder) and `CheckNoLinks` (no junctions or symbolic links below a folder). |
 | `internal/event` | `Event`, `Logger`, `Bus`. |

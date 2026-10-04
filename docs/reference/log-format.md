@@ -10,8 +10,9 @@
 - **Time** is local time with milliseconds, taken when the event happened rather than when it reached the disk.
 - **Kind** says what the line is. Kinds with a `/` are grouped by area (`NIC/up`, `PROBE/down`, …).
 - **Detail** is free text. Names of adapters, probes and tunnels are in `[brackets]`, and values are `key=value`.
+- **`[held]`** at the end marks a line logged while exmon was starting, waking from sleep or shutting down, before the network was ready. Held lines don't fire triggers and aren't forwarded. See [Startup, sleep and shutdown](../power.md).
 
-Lines end with CRLF (Windows style). The same format is used inside incident files. The baseline file and remote records use JSON instead, with the fields `time`, `source`, `kind`, `subject`, `detail`, `metrics` and `severity`.
+Lines end with CRLF (Windows style). The same format is used inside incident files. The baseline file and remote records use JSON instead, with the fields `time`, `source`, `kind`, `subject`, `detail`, `metrics`, `severity` and `held`.
 
 The log rotates at `log.maxSizeMB`: `exmon.log` → `exmon.1.log` → `exmon.2.log` …, keeping `log.maxFiles` old files.
 
@@ -91,6 +92,19 @@ These are never forwarded remotely.
 | `REMOTE/recovered` | Sending works again. |
 | `REMOTE/spool_overflow` | Old unsent events were dropped because the spool was full. |
 | `REMOTE/spool_error` | The spool couldn't be read or written. |
+
+### Power (source `power`)
+
+Never held. See [Startup, sleep and shutdown](../power.md).
+
+| Kind | Meaning |
+|---|---|
+| `POWER/starting` | exmon started; monitor events are held until the network is ready. |
+| `POWER/suspend` | The machine is going to sleep or hibernate; events are held. |
+| `POWER/resume` | The machine woke up (notified, or detected by a clock jump); events are held until the network is ready. |
+| `POWER/ready` | The network is ready (default route + connection test); events are live again. Says how long it took and how many events were held. |
+| `POWER/not_ready` | No working network within `power.maxWaitSeconds`; events are live again anyway. |
+| `POWER/shutdown` | exmon (or Windows) is stopping; events are held from here on. |
 
 ### Metrics (`METRICS`)
 

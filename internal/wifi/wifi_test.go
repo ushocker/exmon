@@ -108,6 +108,7 @@ type fakeLogger struct {
 func (f *fakeLogger) Log(kind, detail string)                   { f.lines = append(f.lines, kind+" "+detail) }
 func (f *fakeLogger) DeclareMetrics(map[string]event.Direction) {}
 func (f *fakeLogger) Metrics(_ string, m map[string]float64)    { f.metrics = append(f.metrics, m) }
+func (f *fakeLogger) Held() bool                                { return false }
 
 func TestReportMetricsPerPollDeltas(t *testing.T) {
 	p := newPoller(DefaultConfig())

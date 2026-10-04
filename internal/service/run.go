@@ -60,7 +60,9 @@ type handler struct {
 // return values become the service's exit code; a non-zero code counts as a failure,
 // so the recovery actions restart the service.
 func (h *handler) Execute(args []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
-	const accepts = svc.AcceptStop | svc.AcceptShutdown
+	// Pre-shutdown arrives earlier than shutdown, while the network is still up, so
+	// exmon can start holding events before the network is torn down.
+	const accepts = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown
 	status <- svc.Status{State: svc.StartPending, WaitHint: uint32(stopWaitHint.Milliseconds())}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,7 +92,7 @@ func (h *handler) Execute(args []string, requests <-chan svc.ChangeRequest, stat
 			switch req.Cmd {
 			case svc.Interrogate:
 				status <- req.CurrentStatus
-			case svc.Stop, svc.Shutdown:
+			case svc.Stop, svc.Shutdown, svc.PreShutdown:
 				cancel()
 				return h.stopping(done, status)
 			}

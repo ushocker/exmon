@@ -130,8 +130,17 @@ func (e *Engine) loop() {
 
 func (e *Engine) handle(ev event.Event) {
 	if ev.IsMetrics() {
-		e.evaluate(ev)
+		// Held metrics come from while the machine was starting, waking or shutting
+		// down, before the network was ready: expected to look bad, so never a trigger.
+		if !ev.Held {
+			e.evaluate(ev)
+		}
 		return
+	}
+	// Around sleep and startup, forget partial "N samples in a row" streaks, so
+	// samples from before the machine slept can't combine with ones after it.
+	if ev.Source == "power" {
+		clear(e.streak) // clear empties a map in place
 	}
 	// A log line: it goes into the rolling window and every open capture.
 	e.window.Add(ev)

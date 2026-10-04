@@ -39,3 +39,13 @@ func TestSeverityAtLeastValidation(t *testing.T) {
 		t.Error("severityAtLeast 6 should fail")
 	}
 }
+
+func TestHeldNotForwarded(t *testing.T) {
+	cfg := Config{Include: []Selector{{}}} // a selector that matches everything
+	if cfg.wanted(event.Event{Kind: "PROBE/down", Held: true}) {
+		t.Error("held events must never be forwarded")
+	}
+	if !cfg.wanted(event.Event{Kind: "PROBE/down"}) {
+		t.Error("live events should be forwarded")
+	}
+}

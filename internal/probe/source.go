@@ -29,8 +29,9 @@ var metricDirections = map[string]event.Direction{
 
 // Source implements source.Source for the connectivity probes.
 type Source struct {
-	cfg   Config
-	wasUp map[string]bool // probe name -> up at the last round, for down/up transitions
+	cfg     Config
+	wasUp   map[string]bool // probe name -> up at the last round, for down/up transitions
+	wasHeld bool            // the previous round's events were held (starting, waking)
 }
 
 // New creates the probe source.
@@ -56,6 +57,14 @@ func (s *Source) Run(ctx context.Context, log event.Logger) error {
 
 // round runs every probe at once and logs the results in a fixed order.
 func (s *Source) round(ctx context.Context, log event.Logger) {
+	// When events become live again after being held, forget the up/down history,
+	// so anything still down is reported again (live) rather than only in a held line.
+	held := log.Held()
+	if s.wasHeld && !held {
+		clear(s.wasUp)
+	}
+	s.wasHeld = held
+
 	timeout := time.Duration(max(1, s.cfg.TimeoutSeconds)) * time.Second
 	count := max(1, s.cfg.PingCount)
 

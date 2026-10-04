@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"exmon/internal/event"
 )
 
 func TestTransition(t *testing.T) {
@@ -150,5 +152,38 @@ func TestTracerAttachesToRunningTrace(t *testing.T) {
 	}
 	if ids := tr.finish(); len(ids) != 2 || tr.running {
 		t.Errorf("finish returned %v, running=%v", ids, tr.running)
+	}
+}
+
+// heldLogger lets a test switch Held on and off and records lines.
+type heldLogger struct {
+	held  bool
+	lines []string
+}
+
+func (l *heldLogger) Log(kind, detail string)                   { l.lines = append(l.lines, kind) }
+func (l *heldLogger) Metrics(string, map[string]float64)        {}
+func (l *heldLogger) DeclareMetrics(map[string]event.Direction) {}
+func (l *heldLogger) Held() bool                                { return l.held }
+
+// TestDownReannouncedWhenLive: a probe that went down while events were held is
+// reported again (live) on the first round after they are released.
+func TestDownReannouncedWhenLive(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.DNSNames = nil
+	cfg.Endpoints = []Endpoint{{Name: "closed", Target: "127.0.0.1", Port: 1}}
+	cfg.PingCount = 1
+	cfg.TimeoutSeconds = 1
+	s := New(cfg)
+	l := &heldLogger{held: true}
+	s.round(context.Background(), l) // held: PROBE/down logged, but held
+	l.lines, l.held = nil, false
+	s.round(context.Background(), l) // live: must report PROBE/down again
+	found := false
+	for _, k := range l.lines {
+		found = found || k == "PROBE/down"
+	}
+	if !found {
+		t.Errorf("want PROBE/down re-announced when live; got %v", l.lines)
 	}
 }

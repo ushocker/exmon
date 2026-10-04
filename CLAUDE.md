@@ -8,7 +8,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 It was ported from the C# WlanWatch in `reference/csharp/`; the NIC/VPN/probe detections come from the PowerShell script in `reference/Powershell/` (its Azure Log Analytics/credential parts were deliberately not ported). Leave `reference/` untouched. It runs in a console or as a Windows Service (`exmon.exe install`; LocalService with the `NT SERVICE\exmon` SID; see `docs/service.md`). The owner is new to Go, so explain Go-specific idioms when introducing them.
 
-User and developer documentation lives in `docs/` (start at `docs/README.md`). When you add or change a feature, setting, log kind or metric, update the matching page: `docs/configuration.md`, `docs/monitors/*`, `docs/reference/metrics.md`, `docs/reference/log-format.md`.
+User and developer documentation lives in `docs/` (start at `docs/README.md`).
+
+## Keeping docs in sync (required)
+
+Whenever a change affects behaviour a user or developer would read about, update the docs **in the same change**, before reporting the task as done. Don't wait to be asked. A change isn't finished until the docs match the code.
+
+| If you change… | Update |
+|---|---|
+| a config setting, default, flag or allowed range | `docs/configuration.md` (incl. `#allowed-ranges`), `exmon.example.json` |
+| a monitor/source's behaviour | `docs/monitors/<name>.md` (wifi, nic, vpn, probes, path-trace) |
+| a metric name, subject or direction | `docs/reference/metrics.md` and the **Metrics** list in this file |
+| a log kind or line/jsonl format | `docs/reference/log-format.md` |
+| files written, paths, retention | `docs/reference/files.md` |
+| incident triggers, severity, holds | `docs/incidents.md` |
+| remote queue/spool/delivery | `docs/remote.md` |
+| baseline mode | `docs/baseline.md` |
+| service install/permissions/trust | `docs/service.md` |
+| package layout, bus, consumers | `docs/architecture.md` and the **Architecture** section in this file |
+| commands or first-run steps | `docs/getting-started.md` and **Commands** in this file |
+| a new page | link it from `docs/README.md` |
+
+Pure refactors, test-only changes and internal renames with no visible effect need no doc update. If unsure, update. When you finish, say which doc pages you changed (or that none were needed and why). Leave `docs/design/*` as historical design notes unless asked.
 
 ## Commands
 
@@ -43,7 +64,8 @@ Sources publish to a fan-out bus; every consumer gets its own copy of each event
 ```
 main.go               subcommands (install/uninstall/status) | service (svc.IsWindowsService) | console → run(ctx, opts, asService, ready, warn): subscribe consumers → run sources → ctx cancelled (Ctrl+C or service Stop) → engine.Flush → bus.Close → wait consumers (log file last)
 internal/service      SCM install/uninstall/status, folder DACLs, config Trust check, svc.Handler (StartPending→Running→StopPending checkpoints), Application event log
-internal/event        Event, Logger (Log / Metrics / DeclareMetrics), Bus (Subscribe, Publish, PublishAsync, Close)
+internal/event        Event (incl. Held), Logger (Log / Metrics / DeclareMetrics / Held), Bus (Subscribe, Publish, PublishAsync, Close, Hold/Release gate, For vs ForUnheld)
+internal/power        hold gate driver: suspend/resume (winsys.WatchPower), clock-jump fallback, readiness = default route + connect test (msftconnecttest), max wait → POWER/not_ready, Shutdown on stop
 internal/eventlog     FileSink: one writer goroutine owns the file (bufio, flush ticker, rotation, echo); text or jsonl
 internal/window       rolling window of events (single owner, no mutex)
 internal/incident     trigger Rules on METRICS events; captures window + post-trigger lines; gzip writer; INCIDENT/* events
@@ -71,6 +93,7 @@ internal/probe        every intervalSeconds: DNS (uncached), gateway ping, endpo
   - probe [probe name; `gateway`; `dns:<name>`]: `dns_ms`, `gateway_rtt_ms`, `gateway_loss_pct`, `tcp_connect_ms`, `rtt_avg_ms`, `loss_pct`, `reachable`, `http_total_ms`, `http_ttfb_ms`, `http_tls_ms`, `http_ok`
 - **Severity**: each trigger has `severity` 1-5, **1 = most serious** (default 3). It appears as `sev=N` in INCIDENT/* details, `Event.Severity`, `-sevN-` in the incident id/file name and a `# severity:` header line. Retention is per severity (`maxIncidentsBySeverity`, falling back to `maxIncidents`; legacy files without `-sevN-` count as 3), so floods of low-severity incidents never delete Sev1 files. Remote selectors can add `severityAtLeast: N` (matches Sev1..N; events without a severity never match it).
 - **Incident holds**: `INCIDENT/triggered` carries `id=<file stem>`. Any component may publish `INCIDENT/hold id=X` / `INCIDENT/release id=X` to keep that capture open for late evidence (capped by `maxHoldSeconds`). The path tracer uses this so hops land in the incident file. Hold/release are never forwarded remotely.
+- **Held events**: while `internal/power` holds the gate (startup, sleep/wake, shutdown until the network is ready), events from `bus.For` loggers carry `Held`. They are logged with `[held]` but don't trigger, aren't forwarded and are excluded from baseline stats. exmon/power lines use `bus.ForUnheld`. Any new consumer that alarms or forwards must skip `Held`; fake `event.Logger`s in tests need a `Held() bool` method. The service accepts pre-shutdown; the console treats SIGTERM (Windows shutdown/log-off) like Ctrl+C.
 - **Bus rule**: a consumer must never call `Publish` from the goroutine that reads its own subscription (deadlock when its channel is full). Use `PublishAsync` there, or publish from another goroutine.
 - **Remote**: delivery is at-least-once; each `Record` has a random `id` for de-duplication and the computer name as `host`. Spool survives restarts; `REMOTE/*` events are local-only. `--remote-simulate-offline` makes sends fail for testing.
 

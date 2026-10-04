@@ -86,7 +86,7 @@ PROBE/down  [M365] [M365] https://outlook.office365.com FAILED after 188.5ms: ..
 PROBE/up    [M365] [M365] 200 dns=...
 ```
 
-A probe that is down on its very first round also reports `PROBE/down`. These lines make good [remote](../remote.md) events.
+A probe that is down on its very first round also reports `PROBE/down`. When events go live again after being [held](../power.md) (startup, waking from sleep), the probe forgets its previous states, so anything still down is reported again as a live `PROBE/down`. These lines make good [remote](../remote.md) events.
 
 ## Path trace
 

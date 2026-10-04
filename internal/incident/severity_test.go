@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSeverityDefaultAndValidation(t *testing.T) {
@@ -112,4 +113,20 @@ func TestRetentionValidation(t *testing.T) {
 	if cfg.Validate() == nil {
 		t.Error("negative limit should fail")
 	}
+}
+
+func TestHeldMetricsDontTrigger(t *testing.T) {
+	cfg := testConfig()
+	cfg.Triggers[0].ForSamples = 1
+	h := newHarness(t, cfg)
+	h.bus.Hold()
+	h.bus.For("wifi").Metrics("nic", map[string]float64{"rssi_dbm": -90}) // held: must not fire
+	h.bus.Release()
+	time.Sleep(100 * time.Millisecond)
+	if h.has("INCIDENT/triggered") {
+		t.Fatal("a held metric fired a trigger")
+	}
+	h.bus.For("wifi").Metrics("nic", map[string]float64{"rssi_dbm": -90}) // live: fires
+	h.waitFor(t, "INCIDENT/triggered")
+	h.stop()
 }

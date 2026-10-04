@@ -91,8 +91,16 @@
     "include": [
       { "source": "wifi", "kinds": ["ACM/*", "MSM/*"] },
       { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
-      { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed"] }
+      { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] }
     ]
+  },
+  "power": {
+    "enabled": true,
+    "testURL": "http://www.msftconnecttest.com/connecttest.txt",
+    "expect": "Microsoft Connect Test",
+    "maxWaitSeconds": 180,
+    "settleSeconds": 0,
+    "checkSeconds": 5
   },
   "baseline": {
     "enabled": false,

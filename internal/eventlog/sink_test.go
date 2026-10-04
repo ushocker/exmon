@@ -209,3 +209,17 @@ func TestRotationOnlyTouchesItsOwnFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestHeldMarker(t *testing.T) {
+	bus, s := start(t, testConfig(t))
+	bus.Hold()
+	bus.For("wifi").Log("POLL", "while waking")
+	bus.Release()
+	bus.For("wifi").Log("POLL", "live")
+	bus.Close()
+	s.Wait()
+	lines := readLines(t, s.Path())
+	if !strings.HasSuffix(lines[0], "while waking [held]") || strings.HasSuffix(lines[1], "[held]") {
+		t.Errorf("lines %q", lines)
+	}
+}

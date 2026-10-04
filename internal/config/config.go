@@ -17,6 +17,7 @@ import (
 	"exmon/internal/eventlog"
 	"exmon/internal/incident"
 	"exmon/internal/nic"
+	"exmon/internal/power"
 	"exmon/internal/probe"
 	"exmon/internal/remote"
 	"exmon/internal/safepath"
@@ -36,6 +37,7 @@ type Options struct {
 	NIC      nic.Config      `json:"nic"`
 	VPN      vpn.Config      `json:"vpn"`
 	Probe    probe.Config    `json:"probe"`
+	Power    power.Config    `json:"power"`
 
 	// OutputRoots are extra folders the service may write its outputs to, besides
 	// %ProgramData%\exmon (see CheckOutputs). Console mode doesn't use them.
@@ -58,6 +60,7 @@ func Defaults() Options {
 		NIC:      nic.DefaultConfig(),
 		VPN:      vpn.DefaultConfig(),
 		Probe:    probe.DefaultConfig(),
+		Power:    power.DefaultConfig(),
 	}
 }
 
@@ -126,6 +129,7 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 	flags.BoolVar(&ff.Probe.Enabled, "probe-enabled", ff.Probe.Enabled, "run connectivity probes (DNS, gateway, endpoints, HTTP)")
 	flags.IntVar(&ff.Probe.IntervalSeconds, "probe-interval-seconds", ff.Probe.IntervalSeconds, "seconds between probe rounds")
 	flags.IntVar(&ff.Probe.PathTrace.IntervalMinutes, "probe-path-trace-minutes", ff.Probe.PathTrace.IntervalMinutes, "minutes between periodic path traces; 0 = off")
+	flags.BoolVar(&ff.Power.Enabled, "power-enabled", ff.Power.Enabled, "hold events while starting, waking from sleep or shutting down, until the network is ready")
 
 	if err := flags.Parse(args); err != nil {
 		return opts, err
@@ -200,6 +204,7 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 		"probe-enabled":            func() { opts.Probe.Enabled = ff.Probe.Enabled },
 		"probe-interval-seconds":   func() { opts.Probe.IntervalSeconds = ff.Probe.IntervalSeconds },
 		"probe-path-trace-minutes": func() { opts.Probe.PathTrace.IntervalMinutes = ff.Probe.PathTrace.IntervalMinutes },
+		"power-enabled":            func() { opts.Power.Enabled = ff.Power.Enabled },
 	}
 	flags.Visit(func(f *flag.Flag) {
 		if set, ok := overrides[f.Name]; ok {
@@ -281,7 +286,7 @@ func (o Options) Validate() error {
 	}
 	// errors.Join combines several errors into one (nil ones are ignored).
 	return errors.Join(o.Log.Validate(), o.WiFi.Validate(), o.NIC.Validate(), o.VPN.Validate(),
-		o.Probe.Validate(), o.Incident.Validate(), o.Remote.Validate(), o.Baseline.Validate())
+		o.Probe.Validate(), o.Power.Validate(), o.Incident.Validate(), o.Remote.Validate(), o.Baseline.Validate())
 }
 
 // DefaultConfigPath is the machine-wide config location (%VAR% not yet expanded).

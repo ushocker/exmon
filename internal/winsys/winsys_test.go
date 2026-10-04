@@ -82,3 +82,18 @@ func TestConsoleUser(t *testing.T) {
 	// server with nobody logged on it may be empty.
 	t.Logf("console user: %q, elevated: %v", ConsoleUser(), IsElevated())
 }
+
+// TestWatchPower checks registration and unregistration work. Sleep itself can't be
+// triggered from a test, so the events are tested in internal/power with fakes.
+func TestWatchPower(t *testing.T) {
+	ch := make(chan PowerEvent, 1)
+	w, err := WatchPower(ch)
+	if err != nil {
+		t.Fatalf("WatchPower: %v", err)
+	}
+	w.Stop()
+	w.Stop() // safe twice
+	if PowerSuspend.String() != "suspend" || PowerResume.String() != "resume" {
+		t.Error("PowerEvent names")
+	}
+}

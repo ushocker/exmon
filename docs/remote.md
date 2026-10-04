@@ -46,7 +46,7 @@ One JSON object per event:
 
 The default is `[{ "kinds": ["INCIDENT/*"] }]`: incidents only. See [event kinds](reference/log-format.md#event-kinds) for everything you can select.
 
-These are never sent, whatever the selectors say: metrics, `REMOTE/*` lines (the queue's own status), and `INCIDENT/hold` / `INCIDENT/release`.
+These are never sent, whatever the selectors say: metrics, **held** events (from while the machine was starting, waking or shutting down; see [Startup, sleep and shutdown](power.md)), `REMOTE/*` lines (the queue's own status), and `INCIDENT/hold` / `INCIDENT/release`. `POWER/*` lines are never held, so they can be selected; `POWER/not_ready` is a useful one.
 
 ### Filtering by severity
 

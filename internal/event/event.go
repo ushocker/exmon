@@ -21,6 +21,12 @@ type Event struct {
 
 	// Severity is set on incident events: 1 = most serious ... 5 = least. 0 = none.
 	Severity int `json:"severity,omitempty"`
+
+	// Held marks an event from a monitor while the machine is starting up, waking
+	// from sleep or shutting down, before the network is known to work. Held events
+	// are still written to the log (marked [held]) but don't fire triggers, aren't
+	// forwarded remotely and don't count in baseline statistics.
+	Held bool `json:"held,omitempty"`
 }
 
 // IsMetrics reports whether e is a measurement rather than a log line.
@@ -48,4 +54,9 @@ type Logger interface {
 	// DeclareMetrics tells consumers which direction is "bad" for each metric this
 	// source reports. Call it once, before reporting metrics.
 	DeclareMetrics(dirs map[string]Direction)
+
+	// Held reports whether events are currently being held back (the machine is
+	// starting, waking from sleep or shutting down; see Bus.Hold). Sources that
+	// report state changes use it to re-announce their state once events are live.
+	Held() bool
 }

@@ -21,6 +21,12 @@ Windows restarts a failed service three times (after 5s, 10s and 30s), then give
 
 The service account (LocalService) doesn't use your personal proxy settings and can't sign in to an authenticating proxy. Set `HTTPS_PROXY` for the service, or allow the probe targets directly. See [Running as a Windows Service](service.md#what-differs-under-localservice).
 
+## Lines end with `[held]`, or `POWER/not_ready` after every wake
+
+`[held]` lines were logged while exmon was starting, waking from sleep or shutting down, before the network was ready. That's expected; they don't fire triggers or get forwarded. See [Startup, sleep and shutdown](power.md).
+
+If **every** startup or wake ends in `POWER/not_ready` after the full wait, the connection test can't reach `www.msftconnecttest.com`. This is common behind an authenticating proxy, especially for the service account. Point `power.testURL` at an internal page reachable without a proxy (with `power.expect` set to text on it), or set `power.testURL` to `""` so a default route is enough.
+
 ## The log is quiet. Is it working?
 
 Most monitors only write when something changes, plus heartbeat lines:

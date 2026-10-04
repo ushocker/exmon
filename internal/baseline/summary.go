@@ -110,6 +110,9 @@ func (s *Summarizer) loop() {
 }
 
 func (s *Summarizer) add(e event.Event) {
+	if e.Held {
+		return // not normal operation (starting, waking, shutting down): keep it out of the statistics
+	}
 	if !e.IsMetrics() {
 		s.kinds[kindKey{e.Source, e.Kind}]++
 		return

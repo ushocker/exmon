@@ -59,3 +59,33 @@ func TestMetricsAndDirections(t *testing.T) {
 		t.Error("wrong direction lookup")
 	}
 }
+
+func TestHold(t *testing.T) {
+	b := NewBus()
+	ch := b.Subscribe("a", 10, Blocking)
+	mon, life := b.For("wifi"), b.ForUnheld("power")
+
+	b.Hold()
+	if !mon.Held() || life.Held() {
+		t.Error("monitor loggers report held; unheld loggers never do")
+	}
+	mon.Log("POLL", "during")
+	mon.Metrics("nic", map[string]float64{"x": 1})
+	life.Log("POWER/resume", "")
+	if n := b.Release(); n != 2 {
+		t.Errorf("Release counted %d held events, want 2", n)
+	}
+	mon.Log("POLL", "after")
+	b.Close()
+
+	var got []Event
+	for e := range ch {
+		got = append(got, e)
+	}
+	want := []bool{true, true, false, false} // POLL, METRICS, POWER, POLL after release
+	for i, e := range got {
+		if e.Held != want[i] {
+			t.Errorf("event %d (%s) Held=%v, want %v", i, e.Kind, e.Held, want[i])
+		}
+	}
+}

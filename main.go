@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 
 	"exmon/internal/baseline"
 	"exmon/internal/config"
@@ -21,6 +22,7 @@ import (
 	"exmon/internal/eventlog"
 	"exmon/internal/incident"
 	"exmon/internal/nic"
+	"exmon/internal/power"
 	"exmon/internal/probe"
 	"exmon/internal/remote"
 	"exmon/internal/service"
@@ -81,7 +83,9 @@ func main() {
 		return
 	}
 	// ctx is cancelled when Ctrl+C is pressed.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Go delivers Windows shutdown, log-off and console-close as SIGTERM, so those
+	// stop exmon cleanly too.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, opts, false, func() {}, func(string) {}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -228,7 +232,8 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 		sources = append(sources, probe.New(opts.Probe))
 	}
 
-	log := bus.For("exmon")
+	// exmon's own lines are never held: they explain what is going on.
+	log := bus.ForUnheld("exmon")
 	if asService {
 		log.Log("MONITOR", fmt.Sprintf("exmon service started, logging to %s", fileSink.Path()))
 	} else {
@@ -249,6 +254,15 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 		log.Log("MONITOR", "no sources enabled")
 	}
 
+	// Startup, sleep/wake and shutdown: hold monitor events until the network is
+	// ready. Start holds right away, before the monitors produce anything.
+	var pw *power.Watcher
+	if opts.Power.Enabled {
+		pw = power.New(opts.Power, bus, bus.ForUnheld("power"), power.NetworkCheck(opts.Power))
+		pw.Start()
+		go pw.Run(ctx)
+	}
+
 	// A WaitGroup counts running goroutines; Wait blocks until the count is back to 0.
 	var wg sync.WaitGroup
 	for _, src := range sources {
@@ -262,6 +276,13 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 		}()
 	}
 	ready() // monitors are running (each retries on its own if Windows isn't ready yet)
+
+	// Wait for Ctrl+C, a service Stop, or Windows shutting down. From then on, hold
+	// monitor events: networks going away during shutdown is expected.
+	<-ctx.Done()
+	if pw != nil {
+		pw.Shutdown()
+	}
 	wg.Wait()
 
 	// Shutdown order matters:
@@ -280,6 +301,14 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 
 // describe logs which optional systems are running.
 func describe(log event.Logger, o config.Options) {
+	if o.Power.Enabled {
+		test := o.Power.TestURL
+		if test == "" {
+			test = "none (a default route is enough)"
+		}
+		log.Log("MONITOR", fmt.Sprintf("power: holding events at startup, on wake and at shutdown until the network is ready; test %s; max wait %ds",
+			test, o.Power.MaxWaitSeconds))
+	}
 	if o.Probe.Enabled {
 		trace := "off"
 		if pt := o.Probe.PathTrace; pt.IntervalMinutes > 0 || pt.OnIncident {

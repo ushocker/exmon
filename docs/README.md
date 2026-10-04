@@ -16,6 +16,7 @@ It is a single Windows executable written in Go, with no runtime dependencies. R
 | Incidents | Threshold triggers with severities; each incident saved as a `.log.gz` holding the rolling window plus what happened after | [Incidents](incidents.md) |
 | Remote queue | Selected events forwarded to a remote target through an on-disk spool with retries and backoff | [Remote queue](remote.md) |
 | Baseline mode | Records every measurement and suggests trigger thresholds from what is normal on this machine | [Baseline mode](baseline.md) |
+| Startup, sleep and shutdown | Holds events while starting, waking or shutting down until the network passes a connection test, so reconnecting isn't reported as a problem | [Startup, sleep and shutdown](power.md) |
 | Windows Service | Runs at startup as a low-privilege service with locked-down folders; install, upgrade and uninstall from the exe | [Running as a Windows Service](service.md) |
 
 ## Where to start

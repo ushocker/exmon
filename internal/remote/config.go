@@ -87,11 +87,12 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// wanted reports whether an event should be forwarded. Measurements, the queue's
-// own REMOTE/* status lines and the internal INCIDENT/hold and /release bookkeeping
-// are never forwarded.
+// wanted reports whether an event should be forwarded. Measurements, held events
+// (from while the machine was starting, waking or shutting down), the queue's own
+// REMOTE/* status lines and the internal INCIDENT/hold and /release bookkeeping are
+// never forwarded.
 func (c Config) wanted(e event.Event) bool {
-	if e.IsMetrics() || strings.HasPrefix(e.Kind, "REMOTE/") ||
+	if e.IsMetrics() || e.Held || strings.HasPrefix(e.Kind, "REMOTE/") ||
 		e.Kind == "INCIDENT/hold" || e.Kind == "INCIDENT/release" {
 		return false
 	}

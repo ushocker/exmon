@@ -91,3 +91,30 @@ func TestHandlerStartupFailure(t *testing.T) {
 		t.Errorf("event log %v", elog.msgs)
 	}
 }
+
+// TestHandlerPreShutdown checks Windows' early shutdown notice stops exmon cleanly.
+func TestHandlerPreShutdown(t *testing.T) {
+	elog := &fakeLog{}
+	h := &handler{app: func(ctx context.Context, ready func(), _ EventLog) error {
+		ready()
+		<-ctx.Done()
+		return nil
+	}, elog: elog}
+	requests := make(chan svc.ChangeRequest, 1)
+	status := make(chan svc.Status, 100)
+	go func() {
+		for s := range status {
+			if s.State == svc.Running {
+				if s.Accepts&svc.AcceptPreShutdown == 0 {
+					t.Error("the service must accept pre-shutdown")
+				}
+				requests <- svc.ChangeRequest{Cmd: svc.PreShutdown}
+			}
+		}
+	}()
+	special, code := h.Execute(nil, requests, status)
+	close(status)
+	if special || code != 0 {
+		t.Errorf("exit = %v/%d, want a clean stop", special, code)
+	}
+}

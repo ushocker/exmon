@@ -36,6 +36,7 @@ Flags can be written with one or two dashes (`-config` or `--config`). An on/off
 | `--log-path`, `--log-max-size-mb`, `--log-max-files`, `--log-flush-interval-ms` | `log.*` |
 | `--wifi-enabled`, `--wifi-poll-seconds`, `--wifi-neighbors`, `--wifi-debug-poll`, `--wifi-rssi-threshold`, `--wifi-rate-change-percent`, `--wifi-error-pct-threshold`, `--wifi-min-stats-frames`, `--wifi-heartbeat-seconds` | `wifi.*` |
 | `--nic-enabled` | `nic.enabled` |
+| `--power-enabled` | `power.enabled` |
 | `--vpn-enabled` | `vpn.enabled` |
 | `--probe-enabled`, `--probe-interval-seconds`, `--probe-path-trace-minutes` | `probe.*` |
 | `--incident-enabled`, `--incident-dir`, `--incident-window-minutes`, `--incident-post-seconds` | `incident.*` |
@@ -159,6 +160,19 @@ See [Baseline mode](baseline.md).
 | `maxSizeMB` | `100` | Rotation size for the baseline file. |
 | `maxFiles` | `5` | Rotated baseline files to keep. |
 
+## `power`: startup, sleep and shutdown
+
+See [Startup, sleep and shutdown](power.md).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Hold monitor events at startup, after waking and during shutdown until the network is ready. |
+| `testURL` | `http://www.msftconnecttest.com/connecttest.txt` | Connection test page; `""` = a default route is enough. |
+| `expect` | `Microsoft Connect Test` | Text the test page must contain. |
+| `maxWaitSeconds` | `180` | Go live anyway after this long, logging `POWER/not_ready`. |
+| `settleSeconds` | `0` | Extra time the network must stay ready before going live. |
+| `checkSeconds` | `5` | How often readiness is checked while waiting. |
+
 ## `outputRoots`: extra output folders (service only)
 
 | Key | Default | Meaning |
@@ -192,5 +206,8 @@ Every number with a resource cost has a range, so a typo can't make exmon exhaus
 | `baseline.summaryMinutes` | 1–1440 |
 | `baseline.maxSizeMB` | 1–1024 |
 | `baseline.maxFiles` | 1–50 |
+| `power.maxWaitSeconds` | 10–3600 |
+| `power.settleSeconds` | 0–600 |
+| `power.checkSeconds` | 1–60 |
 
 Ranges are only checked for features that are enabled.

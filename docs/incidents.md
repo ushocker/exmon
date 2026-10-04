@@ -38,6 +38,8 @@ Triggers watch [metrics](reference/metrics.md), the numbers monitors report on e
 
 Each rule fires at most once per `cooldownSeconds` (default 300), so a long outage gives one incident, not one per poll.
 
+Triggers ignore **held** metrics (from while the machine is starting, waking from sleep or shutting down, before the network is ready), and forget partial `forSamples` counts at each `POWER/*` line. See [Startup, sleep and shutdown](power.md).
+
 **Choosing thresholds:** run [baseline mode](baseline.md) for a while. Its summary suggests starting thresholds from what is normal on that machine.
 
 ## Severity
