@@ -11,7 +11,7 @@ Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='exmon'} -Ma
 Common causes:
 
 - **`refusing config …: … can be changed by …`**: the config file, or its folder, can be changed by non-administrators, so the service won't trust it. Recreate it from an elevated prompt inside `%ProgramData%\exmon\config` (that folder's permissions make admin-created files trusted), or run `exmon.exe install` again to reset the folder permissions.
-- **`… is outside the allowed output folders`**: a log, incident, baseline or spool path is outside `%ProgramData%\exmon`. Add its folder to `outputRoots` and grant the service write access (`icacls <folder> /grant "NT SERVICE\exmon:(OI)(CI)M"`), or use the default locations. See [Custom output locations](service.md#custom-output-locations).
+- **`… is outside the allowed output folders`**: a log, incident, baseline or spool path is outside `%ProgramData%\exmon`. Add its folder to `outputRoots` (and, if that folder excludes SYSTEM, `icacls <folder> /grant "SYSTEM:(OI)(CI)M"`), or use the default locations. See [Custom output locations](service.md#custom-output-locations).
 - **`… is a junction or link; exmon won't write through it`**: a folder on the way to an output is a junction or symbolic link. Point the setting at the real folder instead.
 - **An invalid config**: the same message you would see in the console. Test it with `exmon.exe --config <file>` in a console first.
 
@@ -19,7 +19,24 @@ Windows restarts a failed service three times (after 5s, 10s and 30s), then give
 
 ## HTTP probes fail only when running as a service
 
-The service account (LocalService) doesn't use your personal proxy settings and can't sign in to an authenticating proxy. Set `HTTPS_PROXY` for the service, or allow the probe targets directly. See [Running as a Windows Service](service.md#what-differs-under-localservice).
+The service account (LocalService) doesn't use your personal proxy settings, and a proxy that needs Windows sign-in rejects it (it has no network identity). Set a proxy for the service with `exmon.exe install --proxy http://proxy.corp:8080`, or allow the probe targets directly. See [Differences from a console run](service.md#what-differs-under-localservice).
+
+## `ignored the cloud config` or `reverted to the previous one`
+
+- **`ignored the cloud config: …`** at startup: the stored cloud config (`config\cloud\active.json`) failed its signature check (changed on disk, or signed with a key this build doesn't trust), or breaks a rule. The local config runs instead. Publish a new cloud config, or delete the file.
+- **`cloud config version N didn't run healthily … reverted`**: exmon failed to start, or kept restarting, with a new cloud config, so the previous one was put back automatically. Check the config in your repository against the [cloud limits](control-plane.md#what-a-cloud-config-cant-set) and look at the lines just before the revert.
+
+## `CONTROL/unreachable reason=key_access`
+
+The device has its certificate, but the exmon service isn't allowed to use its key yet. exmon starts the helper service to fix that by itself (`CONTROL/helper_started`). If it keeps happening:
+
+- check `exmon.exe status` shows `exmon-helper` installed; if not, put `exmon-helper.exe` next to `exmon.exe` and run `exmon.exe install` again;
+- look at the helper's messages: `Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='exmon-helper'} -MaxEvents 10`;
+- check the helper's certificate settings match exmon's (`install` copies `control.cert` to it; run `install` again after changing them).
+
+## A console run ignores the machine-wide config
+
+`%ProgramData%\exmon\config` is readable only by administrators, because `exmon.json` can hold the Azure Monitor secret. A console run without elevation can't see it, so it uses the built-in defaults; the `config:` line at startup says which file (if any) was loaded. Run the console elevated, or use `--config` with a copy you can read (without real secrets).
 
 ## Lines end with `[held]`, or `POWER/not_ready` after every wake
 
@@ -95,11 +112,13 @@ Add a fragment of its adapter description to `vpn.adapterPatterns`, and its proc
 
 ## Nothing arrives at the remote target
 
-There is no real remote target yet: events go to `remote-outbox.jsonl`. Also check:
+Check:
 
-- `remote.include`: the default only forwards `INCIDENT/*`. Selectors with `severityAtLeast` only match incident events.
-- `REMOTE/send_failed` lines in the log.
-- Files in `remote-spool\`. That folder holding many segments means sending is failing.
+- The `MONITOR` lines at startup: there is one `remote <name>: ...` line per enabled remote. No line means it is disabled (or `--remotes-enabled=false` was used).
+- That remote's `include`: without a `remotes` key, the default remote only forwards `INCIDENT/*` to `remote-outbox.jsonl`. Selectors with `severityAtLeast` only match incident events.
+- `REMOTE/send_failed` and `REMOTE/dropped` lines for that remote (`remote=<name>`).
+- Files in `remote-spool\<name>\`. Many segments there means sending is failing.
+- An `azureMonitor` remote failing with `…: EOF`: the connection to the ingestion endpoint is closed during the TLS handshake. That's a network filter blocking the host name (`*.ingest.monitor.azure.com` is on many telemetry block lists), not Azure. See [the test setup troubleshooting table](deploy/test-install.md#troubleshooting).
 
 ## Incident files disappear
 

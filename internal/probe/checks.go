@@ -120,7 +120,7 @@ func checkEndpoint(ctx context.Context, e Endpoint, count int, timeout time.Dura
 
 	d := net.Dialer{Timeout: timeout}
 	start := time.Now()
-	conn, err := d.DialContext(ctx, "tcp4", target)
+	conn, err := guardedDialContext(&d)(ctx, "tcp4", target)
 	took := time.Since(start)
 	tcp := ""
 	remote := ""
@@ -136,7 +136,7 @@ func checkEndpoint(ctx context.Context, e Endpoint, count int, timeout time.Dura
 
 	// Ping the address the TCP connect reached, or resolve it if the connect failed.
 	if remote == "" {
-		if addrs, err := net.DefaultResolver.LookupIP(ctx, "ip4", e.Target); err == nil && len(addrs) > 0 {
+		if addrs, err := net.DefaultResolver.LookupIP(ctx, "ip4", e.Target); err == nil && len(addrs) > 0 && !blocked(addrs[0]) {
 			remote = addrs[0].String()
 		}
 	}

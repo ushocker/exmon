@@ -77,22 +77,68 @@
       { "name": "vpn-dropped",      "source": "vpn",   "metric": "vpn_up",             "op": "<",  "threshold": 1,                     "severity": 2 }
     ]
   },
-  "remote": {
-    "enabled": true,
-    "endpoint": "",
-    "outbox": "%ProgramData%\\exmon\\remote-outbox.jsonl",
-    "spoolDir": "%ProgramData%\\exmon\\remote-spool",
-    "segmentKB": 1024,
-    "maxSpoolMB": 100,
-    "batchSize": 50,
-    "flushIntervalMs": 5000,
-    "retryInitialSeconds": 5,
-    "retryMaxMinutes": 15,
-    "include": [
-      { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "ACM/scan_fail", "MSM/connected", "MSM/disconnected", "MSM/roaming_start", "MSM/roaming_end", "MSM/radio_state_change"] },
-      { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
-      { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] }
-    ]
+  "remotes": [
+    {
+      "name": "outbox",
+      "type": "outbox",
+      "enabled": true,
+      "settings": { "path": "%ProgramData%\\exmon\\remote-outbox.jsonl" },
+      "spoolDir": "%ProgramData%\\exmon\\remote-spool\\outbox",
+      "segmentKB": 1024,
+      "maxSpoolMB": 100,
+      "batchSize": 50,
+      "flushIntervalMs": 5000,
+      "retryInitialSeconds": 5,
+      "retryMaxMinutes": 15,
+      "include": [
+        { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "ACM/scan_fail", "MSM/connected", "MSM/disconnected", "MSM/roaming_start", "MSM/roaming_end", "MSM/radio_state_change"] },
+        { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
+        { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] }
+      ]
+    },
+    {
+      "name": "law",
+      "type": "azureMonitor",
+      "enabled": false,
+      "settings": {
+        "endpoint": "https://exmon-prod-dcr-xxxx.eastus-1.ingest.monitor.azure.com",
+        "dcrImmutableId": "dcr-00000000000000000000000000000000",
+        "streamName": "Custom-ExmonEvents",
+        "tenantId": "00000000-0000-0000-0000-000000000000",
+        "clientId": "00000000-0000-0000-0000-000000000000",
+        "clientSecret": "REPLACE-WITH-THE-INGEST-APP-SECRET"
+      },
+      "batchSize": 200,
+      "include": [
+        { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "MSM/disconnected", "MSM/roaming_end"] },
+        { "kinds": ["INCIDENT/*"] },
+        { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] },
+        { "source": "control", "kinds": ["CONTROL/unreachable", "CONTROL/connected", "CONTROL/applied", "CONTROL/rejected", "CONTROL/failed", "CONTROL/tls_fallback", "CONTROL/config_committed"] },
+        { "source": "update" }
+      ]
+    }
+  ],
+  "control": {
+    "enabled": false,
+    "host": "exmon-prod.eastus-1.ts.eventgrid.azure.net",
+    "port": 443,
+    "path": "/mqtt",
+    "cert": { "store": "LocalMachine", "subjectCN": "", "issuerCN": "exmon Issuing CA" },
+    "keepAliveSeconds": 60,
+    "sessionExpiryMinutes": 480,
+    "connectTimeoutSeconds": 30,
+    "chirpMinutes": 15,
+    "statusMinutes": 15,
+    "maxInboundKB": 256,
+    "tlsMaxVersion": "",
+    "update": {
+      "enabled": false,
+      "allowedHosts": ["exmonreleasesprod.blob.core.windows.net"],
+      "maxSizeMB": 64,
+      "healthMinutes": 10,
+      "publisherCN": "Contoso Ltd",
+      "requireAuthenticode": true
+    }
   },
   "power": {
     "enabled": true,

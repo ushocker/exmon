@@ -7,6 +7,7 @@
 package winsys
 
 import (
+	"errors"
 	"fmt"
 	"unsafe"
 
@@ -68,6 +69,31 @@ func ApplyDACL(path, sddl string) error {
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, info, owner, nil, dacl, nil); err != nil {
 		return fmt.Errorf("set permissions on %s: %w", path, err)
+	}
+	return nil
+}
+
+// InheritDACL replaces path's own permissions with its folder's: it removes every
+// explicit entry and turns inheritance on. A file renamed into a folder keeps the
+// permissions it had in the old folder (Windows doesn't recompute them on a move),
+// so the helper calls this after moving an update into Program Files.
+func InheritDACL(path string) error {
+	// "D:" is an empty, unprotected DACL. It must be an empty ACL, never a nil
+	// one: a nil DACL would mean "no restrictions at all".
+	sd, err := windows.SecurityDescriptorFromString("D:")
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	if dacl == nil {
+		return errors.New("empty DACL came back nil")
+	}
+	info := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION)
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, info, nil, nil, dacl, nil); err != nil {
+		return fmt.Errorf("reset permissions on %s: %w", path, err)
 	}
 	return nil
 }

@@ -12,7 +12,7 @@ This page is for anyone changing exmon's code. The code is plain Go with no cgo;
  wifi   ─┐                              ┌─► eventlog.FileSink    text log (always on)
  nic    ─┤   event.Logger               ├─► incident.Engine      rolling window + triggers → incident-*.log.gz
  vpn    ─┼── (bus.For(name)) ──► Bus ───┼─► probe.Tracer         path traces (interval + on incident)
- probe  ─┘                              ├─► remote.Queue         on-disk spool → Sender
+ probe  ─┘                              ├─► remote.Queue × N     one per remote: spool → Sender (by type)
                                         ├─► eventlog.FileSink    baseline.jsonl        (baseline mode)
                                         └─► baseline.Summarizer  baseline-summary.txt  (baseline mode)
 ```
@@ -67,7 +67,14 @@ The bus stamps the time when the event is published, not when it is written to d
 |---|---|
 | `main.go` | Chooses the mode: `install`/`uninstall`/`status` subcommands, service (started by the SCM) or console. Loads the config with the right trust check (`consoleTrust`: admin-only files when elevated or a service) and, for the service, runs `CheckOutputs`. Then `run(ctx, …)` wires consumers and sources and handles shutdown. Embeds `exmon.example.json` for `--write-default-config`. |
 | `internal/service` | Install/uninstall/status through the Service Control Manager, folder permissions, the config trust check, and the `svc.Handler` that reports start/running/stopping to Windows and writes to the Application event log. |
-| `internal/winsys` | Windows security and session wrapper: set folder permissions, check that a path is admin-only, find the console user, check elevation. A third `unsafe` package. |
+| `internal/winsys` | Windows security, session and crypto wrapper: set folder permissions, check that a path is admin-only, find the console user, check elevation; CNG keys (TPM, smart card, software) as a `crypto.Signer`; find and import certificates. A third `unsafe` package. |
+| `internal/enroll` | Test-device enrolment: TPM key and certificate request, signing with the YubiKey test CA, import. |
+| `internal/control` | The control-plane client: MQTT over WebSockets to Event Grid (paho), certificate selection, chirp, signed inbox handling, status, fixed commands. Runs as a source named `control`. |
+| `internal/updater` | exmon's half of an update: rollout selection, download, early checks, the request to `exmon-helper`, and the health report. |
+| `internal/release` | The release manifest type, version arithmetic, and the hand-over files shared by exmon and the helper. |
+| `internal/helper`, `cmd/exmon-helper` | The small LocalSystem helper service: grants exmon use of its certificate key; re-verifies, swaps in and rolls back updates. It imports only `signdoc`, `release` and `winsys`. |
+| `internal/signdoc` | Signed documents: verify an envelope against the built-in keys (signature before parsing), strict decode, and seal (sign). |
+| `cmd/exmonctl` | The administrator's tool (same Go module): YubiKey CA commands, and later config/release publishing. |
 | `internal/config` | `Options` composes each package's `Config`. Load order: defaults, then config file, then flags. Finds the config file (`LoadWith` takes a trust check), validates everything, and `CheckOutputs` keeps the service's outputs inside allowed folders. |
 | `internal/power` | The hold gate's driver: Windows suspend/resume notifications (`winsys.WatchPower`), clock-jump detection, the readiness check (default route + connection test), `Shutdown` on stop. |
 | `internal/limits` | `Range`, `Count` and `First`: the upper/lower bounds every section's `Validate()` uses. |
@@ -76,7 +83,11 @@ The bus stamps the time when the event is published, not when it is written to d
 | `internal/eventlog` | `FileSink`: one goroutine owns the file (buffered writes, periodic flush, rotation, console echo). Text or JSONL. |
 | `internal/window` | The rolling window (single owner, no locking). |
 | `internal/incident` | Trigger rules, captures, hold/release, gzip writer, per-severity retention. |
-| `internal/remote` | `Spool` (segment files + cursor), `Backoff`, `Queue` (appender + sender goroutines), `Sender` interface and the stand-in `OutboxSender`. |
+| `internal/remote` | Per-remote `Config` and the `Remotes` list, `Spool` (segment files + cursor), `Backoff`, `Queue` (appender + sender goroutines), the `Sender` interface, `Permanent` errors, and the registry of target types (`outbox` is built in). |
+| `internal/remote/azuremonitor` | The `azureMonitor` target type: Logs Ingestion API sender. Registered in `internal/remote/senders`. |
+| `internal/secret` | `Secret`, a string that prints as `[redacted]` everywhere; `Reveal()` is the only way to read it. |
+| `internal/entra` | Entra ID client-credentials tokens, cached until shortly before they expire. |
+| `internal/version` | The build's version, set with `-ldflags "-X exmon/internal/version.Version=…"`. |
 | `internal/baseline` | Baseline config and the `Summarizer` (reservoir-sampled percentiles, suggestions). |
 | `internal/source` | The `Source` interface: `Name()`, `Run(ctx, log)`. |
 | `internal/wifi` | Wi-Fi source: notifications and polling in one `select` loop; change detection; frame stats; reconnect with backoff. |
@@ -107,6 +118,18 @@ The bus stamps the time when the event is published, not when it is written to d
 ## Adding a consumer
 
 Subscribe in `main.go` before the sources start (`bus.Subscribe(name, busBuffer, event.Blocking)`), read until the channel closes, and append its `Wait` function to `stops` so shutdown waits for it. Follow the bus rule above if it publishes.
+
+## Adding a remote target type
+
+A remote's `type` picks a `remote.SenderType` from a registry (`internal/remote/registry.go`). To add one, for example a new SIEM:
+
+1. Create `internal/remote/<name>` with a settings struct, decoded with `remote.DecodeSettings` (unknown keys are errors).
+2. Implement `remote.Sender`: `Send(ctx, []Record) error`. Return an ordinary error for "try again later". Wrap it with `remote.Permanent` when retrying can never help (the target rejects the data), so the queue drops that batch instead of blocking. An error with a `RetryAfter() time.Duration` method makes the queue wait at least that long.
+3. Fill in a `remote.SenderType`: `Validate`, `New`, `Describe` (a secret-free summary for the startup log), `Outputs` if it writes local files, and `CloudAllowed` (false if it writes local files).
+4. Register it with `remote.Register("<name>", ...)` in `internal/remote/senders`, which `main.go` and `config` call before anything is validated.
+5. Document it in the [target types](remote.md#target-types) table, `docs/configuration.md` and `exmon.example.json`.
+
+The queue, spool, retries, selectors and multiple remotes work with it unchanged.
 
 ## Adding evidence to incidents
 

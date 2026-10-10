@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"exmon/internal/event"
 )
@@ -28,15 +29,50 @@ func newID() string {
 }
 
 // Sender delivers a batch to the remote. Returning an error means "not delivered,
-// try again later"; the batch stays in the spool.
+// try again later"; the batch stays in the spool. Wrap the error with Permanent
+// when retrying can never help (for example the remote rejects the data's format):
+// the queue then drops the batch instead of retrying it forever.
 type Sender interface {
 	Send(ctx context.Context, batch []Record) error
 }
 
-// OutboxSender is a stand-in for the real remote: it appends each record as a JSON
-// line to a local file so you can see exactly what would be sent.
-//
-// TODO: replace with the real remote target (Config.Endpoint) once it exists.
+// permanentError marks an error as "don't retry".
+type permanentError struct{ err error }
+
+func (p permanentError) Error() string { return p.err.Error() }
+func (p permanentError) Unwrap() error { return p.err }
+
+// Permanent wraps err so the queue drops the batch rather than retrying it.
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return permanentError{err}
+}
+
+// IsPermanent reports whether err (or an error it wraps) was marked Permanent.
+// errors.As walks the chain of wrapped errors looking for that type.
+func IsPermanent(err error) bool {
+	var p permanentError
+	return errors.As(err, &p)
+}
+
+// retryAfter is implemented by errors that know how long the remote asked us to
+// wait (for example an HTTP 429 with a Retry-After header).
+type retryAfter interface{ RetryAfter() time.Duration }
+
+// retryHint returns the wait the remote asked for, or 0.
+func retryHint(err error) time.Duration {
+	var r retryAfter
+	if errors.As(err, &r) {
+		return r.RetryAfter()
+	}
+	return 0
+}
+
+// OutboxSender appends each record as a JSON line to a local file. It is the
+// "outbox" remote type: handy for seeing exactly what would be sent, or for a
+// local collector that reads the file.
 type OutboxSender struct {
 	Path string
 }

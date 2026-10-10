@@ -1,6 +1,14 @@
 # Control plane (proposal)
 
-> **Status: proposal, not implemented.** This records the decisions made so far for centrally managing a fleet of exmon installs, in the spirit of Fleet Management for Falcon LogScale collectors. Nothing here exists in the code yet. Build it on a branch if and when the project goes the "full server" route.
+> **Status: superseded by the built version.** This is the original proposal, kept as a record. The control plane was built (see [Control plane](../control-plane.md), [Updates](../updates.md), [Device certificates](../enrollment.md), [Azure deployment](../deploy/azure.md)), with these differences:
+> - **MQTT only, no HTTPS fallback.** A device that can't reach the broker "chirps" `CONTROL/unreachable` through its normal event stream instead.
+> - **Azure Event Grid** is the broker; topics are per device only (`exmon/v1/device/<id>/{status,outbox,inbox/…}`), no group topics. Rollouts fan out per device from `exmonctl`.
+> - **Signing keys are ECDSA P-256 in Key Vault** (Key Vault has no Ed25519), separate keys for configs/commands and releases.
+> - **The service runs as LocalSystem** and swaps its own exe, with a watchdog started from the old exe that rolls back.
+> - **Device identity:** Intune SCEP (Cloud PKI, TPM, RSA 2048) plus an Automation runbook syncing ring groups to Event Grid clients in production; a YubiKey-held test CA and a client pool in dev. Admins sign in with Entra (no admin certificates).
+> - **Events go to Azure Monitor** (Logs Ingestion API) as one of several remotes, with a write-only app secret in the config.
+>
+> Original status: this recorded the decisions made so far for centrally managing a fleet of exmon installs, in the spirit of Fleet Management for Falcon LogScale collectors.
 >
 > Read together with [Cloud config security](cloud-config-security.md) (the risks specific to a cloud-delivered config) and [Config security review](config-security-review.md) (the local findings, whose fixes should land first).
 

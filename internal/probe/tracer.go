@@ -70,6 +70,10 @@ func (t *Tracer) attach(id string) bool {
 }
 
 // StartTracer starts the tracer. log should be bus.For("pathtrace").
+// KindTraceNow is the event that asks the tracer for a path trace now (the
+// control plane's trace-now command logs it).
+const KindTraceNow = "CONTROL/trace_now"
+
 func StartTracer(cfg Config, events <-chan event.Event, log event.Logger) *Tracer {
 	t := &Tracer{cfg: cfg, events: events, log: log, reqs: make(chan traceRequest, 16), done: make(chan struct{})}
 	worker := make(chan struct{})
@@ -94,6 +98,10 @@ func (t *Tracer) reader() {
 		case ev, ok := <-t.events:
 			if !ok {
 				return
+			}
+			if ev.Kind == KindTraceNow {
+				t.request(traceRequest{reason: "command"}) // a signed trace-now command (control plane)
+				continue
 			}
 			if ev.Kind == "INCIDENT/triggered" && t.cfg.PathTrace.OnIncident {
 				id := incident.IDFromDetail(ev.Detail)
@@ -285,7 +293,7 @@ func (h hop) String() string {
 // resolve4 returns an IPv4 address for a host name or address.
 func resolve4(target string) (string, error) {
 	if ip := net.ParseIP(target); ip != nil && ip.To4() != nil {
-		return ip.String(), nil
+		return ip.String(), checkTarget(ip)
 	}
 	ips, err := net.LookupIP(target)
 	if err != nil {
@@ -293,7 +301,7 @@ func resolve4(target string) (string, error) {
 	}
 	for _, ip := range ips {
 		if ip.To4() != nil {
-			return ip.String(), nil
+			return ip.String(), checkTarget(ip)
 		}
 	}
 	return "", fmt.Errorf("%s has no IPv4 address", target)

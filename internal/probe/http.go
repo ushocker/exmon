@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"time"
@@ -19,7 +20,8 @@ type httpPhases struct {
 
 // checkHTTP fetches one URL on a fresh connection and times each phase.
 func checkHTTP(ctx context.Context, t HTTPTest, timeout time.Duration) result {
-	return checkHTTPWith(ctx, t, timeout, &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true})
+	return checkHTTPWith(ctx, t, timeout, &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true,
+		DialContext: guardedDialContext(&net.Dialer{Timeout: timeout})})
 }
 
 // checkHTTPWith is checkHTTP with a given transport (tests pass one that trusts
@@ -48,7 +50,7 @@ func checkHTTPWith(ctx context.Context, t HTTPTest, timeout time.Duration, trans
 	// A hand-made Transport only speaks HTTP/1.1 unless asked; many servers (Microsoft
 	// 365 included) pick HTTP/2, like a browser would, so allow it.
 	tr.ForceAttemptHTTP2 = true
-	client := &http.Client{Timeout: timeout, Transport: tr}
+	client := &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: checkRedirect}
 	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, t.URL, nil)
 	if err != nil {
 		r.detail = fmt.Sprintf("[%s] bad url: %v", t.Name, err)

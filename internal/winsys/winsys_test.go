@@ -97,3 +97,47 @@ func TestWatchPower(t *testing.T) {
 		t.Error("PowerEvent names")
 	}
 }
+
+// A file moved in from a locked folder keeps that folder's permissions until
+// InheritDACL gives it its new folder's.
+func TestInheritDACL(t *testing.T) {
+	dir := t.TempDir()
+	locked, open := filepath.Join(dir, "locked"), filepath.Join(dir, "open")
+	for _, d := range []string{locked, open} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// "locked" grants only SYSTEM; "open" also grants Users read (inheritable).
+	if err := ApplyDACL(locked, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;OW)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyDACL(open, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;OW)(A;OICI;0x1200a9;;;BU)"); err != nil {
+		t.Fatal(err)
+	}
+	src, dst := filepath.Join(locked, "x.exe"), filepath.Join(open, "x.exe")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if usersCanRead(t, dst) {
+		t.Skip("this Windows recomputed permissions on rename; nothing to test")
+	}
+	if err := InheritDACL(dst); err != nil {
+		t.Fatal(err)
+	}
+	if !usersCanRead(t, dst) {
+		t.Error("after InheritDACL the file should have its folder's Users read entry")
+	}
+}
+
+func usersCanRead(t *testing.T, path string) bool {
+	t.Helper()
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Contains(sd.String(), ";;;BU)")
+}

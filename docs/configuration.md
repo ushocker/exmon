@@ -1,17 +1,18 @@
 # Configuration
 
-exmon combines three layers, each overriding the one before:
+exmon combines these layers, each overriding the one before:
 
 1. **Built-in defaults**, listed in the tables below.
 2. **The config file**, in JSON. Keys you leave out keep their defaults.
-3. **Command-line flags**. Only flags you actually type override anything.
+3. **The cloud config**, only when the [control plane](control-plane.md) is on and has delivered one. It can't set paths or control-plane settings; see [what it can set](control-plane.md#what-a-cloud-config-cant-set).
+4. **Command-line flags**. Only flags you actually type override anything.
 
 See [Getting started](getting-started.md#where-exmon-looks-for-its-config) for how the config file is found. The fullest example is `exmon.example.json` in the repository root, and `exmon.exe --write-default-config` writes the same file out for you to edit.
 
 ## Things to know about the file
 
-- **Lists replace, they don't merge.** If you set `"dnsNames": ["intranet.corp"]`, the default `www.microsoft.com` is gone. The same applies to `triggers`, `endpoints`, `httpTests`, `include`, `adapterPatterns`, `processNames` and `virtualPatterns`.
-- **Paths can use environment variables** written as `%NAME%`, for example `%ProgramData%`. This applies to `log.path`, `incident.dir`, `remote.outbox`, `remote.spoolDir` and `baseline.path`. In JSON, a backslash must be doubled: `"C:\\Logs\\exmon.log"`. Forward slashes also work.
+- **Lists replace, they don't merge.** If you set `"dnsNames": ["intranet.corp"]`, the default `www.microsoft.com` is gone. The same applies to `triggers`, `endpoints`, `httpTests`, `remotes`, `include`, `adapterPatterns`, `processNames` and `virtualPatterns`.
+- **Paths can use environment variables** written as `%NAME%`, for example `%ProgramData%`. This applies to `log.path`, `incident.dir`, each remote's `spoolDir` and outbox `settings.path`, and `baseline.path`. In JSON, a backslash must be doubled: `"C:\\Logs\\exmon.log"`. Forward slashes also work.
 - **Errors stop startup.** exmon checks the whole configuration before it starts and exits with a message if something can't work, such as an unknown trigger operator, a severity of 7, or a number outside its [allowed range](#allowed-ranges).
 - **Elevated runs only trust admin-controlled config.** When exmon runs as administrator (or as the service), it only uses a config file that only administrators can change. See [Troubleshooting](troubleshooting.md#exmon-exits-straight-away-with-a-config-error).
 
@@ -40,10 +41,13 @@ Flags can be written with one or two dashes (`-config` or `--config`). An on/off
 | `--vpn-enabled` | `vpn.enabled` |
 | `--probe-enabled`, `--probe-interval-seconds`, `--probe-path-trace-minutes` | `probe.*` |
 | `--incident-enabled`, `--incident-dir`, `--incident-window-minutes`, `--incident-post-seconds` | `incident.*` |
-| `--remote-enabled`, `--remote-outbox`, `--remote-spool-dir`, `--remote-retry-max-minutes`, `--remote-simulate-offline` | `remote.*` |
+| `--control-enabled`, `--control-host`, `--control-path`, `--control-cert-subject`, `--control-cert-issuer` | `control.*` (`--control-host` also turns the control plane on) |
+| `--update-hosts`, `--update-publisher`, `--update-require-authenticode` | `control.update.*` (`--update-hosts` also turns updates on); see [Updates](updates.md) |
+| `--remotes-enabled=false` | turns every remote in `remotes` off |
+| `--remote-simulate-offline` | makes every remote's sends fail (testing) |
 | `--baseline`, `--baseline-path`, `--baseline-summary-minutes` | `baseline.*` |
 
-Lists such as triggers, endpoints and remote selectors can only be set in the config file.
+Lists such as triggers, endpoints and `remotes` can only be set in the config file. The old `--remote-outbox`, `--remote-spool-dir` and `--remote-retry-max-minutes` flags are gone; set those per remote in the file.
 
 ## `log`: the main log file
 
@@ -129,16 +133,25 @@ See [Incidents](incidents.md).
 | `maxHoldSeconds` | `120` | Longest a path trace (or other evidence) can keep an incident open. |
 | `triggers` | `[]` | Trigger rules. See [Incidents](incidents.md#trigger-rules). |
 
-## `remote`: remote queue
+## `remotes`: where events are forwarded
 
-See [Remote queue](remote.md).
+A list of remotes. Each one picks its own events with `include`, has its own on-disk queue and sends to its own target. See [Remote queue](remote.md).
+
+```json
+"remotes": [
+  { "name": "outbox", "type": "outbox",
+    "settings": { "path": "%ProgramData%\\exmon\\remote-outbox.jsonl" },
+    "include": [ { "kinds": ["INCIDENT/*"] } ] }
+]
+```
 
 | Key | Default | Meaning |
 |---|---|---|
+| `name` | required | Unique; 1–32 lowercase letters, digits or `-`. Shown in `REMOTE/*` lines and used for the default spool folder. |
+| `type` | required | The target type: `outbox` (JSON lines to a local file) or `azureMonitor` ([Log Analytics](azure-monitor.md)). See [target types](remote.md#target-types). |
 | `enabled` | `true` | |
-| `endpoint` | `""` | Reserved for the real remote target (not implemented yet). |
-| `outbox` | `%ProgramData%\exmon\remote-outbox.jsonl` | Where the stand-in sender writes what would be sent. |
-| `spoolDir` | `%ProgramData%\exmon\remote-spool` | The on-disk queue. |
+| `settings` | required | The type's own settings: for `outbox`, `{ "path": "<file>" }`; for `azureMonitor`, see [its settings](azure-monitor.md#settings). Unknown keys are errors. |
+| `spoolDir` | `%ProgramData%\exmon\remote-spool\<name>` | This remote's on-disk queue. Two remotes can't share or nest spool folders. |
 | `segmentKB` | `1024` | Start a new spool file at this size. |
 | `maxSpoolMB` | `100` | Delete the oldest unsent events beyond this, and log it. |
 | `batchSize` | `50` | Events per send. |
@@ -146,7 +159,9 @@ See [Remote queue](remote.md).
 | `retryInitialSeconds` | `5` | First retry delay after a failed send. |
 | `retryMaxMinutes` | `15` | The retry delay doubles up to this, then stays there. |
 | `simulateOffline` | `false` | Testing: every send fails. |
-| `include` | `[{ "kinds": ["INCIDENT/*"] }]` | Which events to forward. See [selectors](remote.md#choosing-what-to-send). |
+| `include` | none | Which events to forward. See [selectors](remote.md#choosing-what-to-send). |
+
+Without a `remotes` key, exmon runs one remote, `outbox`, sending incidents to `%ProgramData%\exmon\remote-outbox.jsonl`. A `remotes` list in the file replaces that default completely; `"remotes": []` forwards nothing. The old single `remote` section is refused at startup; see [Migrating from `remote`](remote.md#migrating-from-remote).
 
 ## `baseline`: learning mode
 
@@ -173,11 +188,20 @@ See [Startup, sleep and shutdown](power.md).
 | `settleSeconds` | `0` | Extra time the network must stay ready before going live. |
 | `checkSeconds` | `5` | How often readiness is checked while waiting. |
 
+## `control`: the control plane
+
+Off by default. Connects to the fleet's MQTT broker (Azure Event Grid) with the device's client certificate. Every setting, and what the device does, is in [Control plane](control-plane.md#settings-control). These are install-time settings; a cloud config can't change them (except `chirpMinutes` and `statusMinutes`).
+
+```json
+"control": { "enabled": true, "host": "exmon-prod.eastus-1.ts.eventgrid.azure.net",
+             "cert": { "issuerCN": "exmon Issuing CA" } }
+```
+
 ## `outputRoots`: extra output folders (service only)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `outputRoots` | none | Folders, besides `%ProgramData%\exmon`, where the service may write its log, incidents, baseline and remote spool/outbox. Full paths; `%VAR%` allowed. See [Custom output locations](service.md#custom-output-locations). |
+| `outputRoots` | none | Folders, besides `%ProgramData%\exmon`, where the service may write its log, incidents, baseline and remote spools and outbox files. Full paths; `%VAR%` allowed. See [Custom output locations](service.md#custom-output-locations). |
 
 ## Allowed ranges
 
@@ -200,14 +224,28 @@ Every number with a resource cost has a range, so a typo can't make exmon exhaus
 | `incident.postTriggerSeconds`, `incident.maxHoldSeconds` | 0–600 |
 | `incident.triggers` | at most 100 entries |
 | `incident.maxIncidents`, each `maxIncidentsBySeverity` value | 0–10000 (0 = unlimited) |
-| `remote.batchSize` | 1–1000 |
-| `remote.maxSpoolMB` | 1–1024 |
-| `remote.segmentKB` | 64–16384 |
+| `remotes` | at most 8 entries |
+| each remote's `batchSize` | 1–1000 |
+| each remote's `maxSpoolMB` | 1–1024 |
+| each remote's `segmentKB` | 64–16384 |
+| each remote's `flushIntervalMs` | 100–60000 |
+| each remote's `retryInitialSeconds` | 1–3600 |
+| each remote's `retryMaxMinutes` | 1–1440 |
+| each remote's `include` | at most 50 selectors |
 | `baseline.summaryMinutes` | 1–1440 |
 | `baseline.maxSizeMB` | 1–1024 |
 | `baseline.maxFiles` | 1–50 |
+| `control.port` | 1–65535 |
+| `control.keepAliveSeconds` | 30–1160 |
+| `control.sessionExpiryMinutes` | 1–480 |
+| `control.connectTimeoutSeconds` | 5–120 |
+| `control.chirpMinutes`, `control.statusMinutes` | 1–1440 |
+| `control.maxInboundKB` | 16–1024 |
+| `control.update.allowedHosts` | at most 5 entries |
+| `control.update.maxSizeMB` | 8–256 |
+| `control.update.healthMinutes` | 5–60 |
 | `power.maxWaitSeconds` | 10–3600 |
 | `power.settleSeconds` | 0–600 |
 | `power.checkSeconds` | 1–60 |
 
-Ranges are only checked for features that are enabled.
+Ranges are only checked for features that are enabled, except `remotes`: every remote in the list is checked, even one with `"enabled": false`, so a mistake shows up before you turn it on.

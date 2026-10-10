@@ -83,13 +83,14 @@ See [Wi-Fi monitor](../monitors/wifi.md).
 
 ### Remote queue (source `remote`)
 
-These are never forwarded remotely.
+These are never forwarded remotely. Each detail starts with `remote=<name>`, the remote it is about.
 
 | Kind | Meaning |
 |---|---|
 | `REMOTE/resuming` | Sending events left from a previous run. |
 | `REMOTE/send_failed` | A send failed. Shows the attempt number and next retry. |
 | `REMOTE/recovered` | Sending works again. |
+| `REMOTE/dropped` | The target permanently rejected a batch (`count=N error=...`); it was dropped so later events can go through. |
 | `REMOTE/spool_overflow` | Old unsent events were dropped because the spool was full. |
 | `REMOTE/spool_error` | The spool couldn't be read or written. |
 
@@ -105,6 +106,40 @@ Never held. See [Startup, sleep and shutdown](../power.md).
 | `POWER/ready` | The network is ready (default route + connection test); events are live again. Says how long it took and how many events were held. |
 | `POWER/not_ready` | No working network within `power.maxWaitSeconds`; events are live again anyway. |
 | `POWER/shutdown` | exmon (or Windows) is stopping; events are held from here on. |
+
+### Control plane (source `control`)
+
+Held like monitor events while starting or waking. See [Control plane](../control-plane.md#log-lines).
+
+| Kind | Meaning |
+|---|---|
+| `CONTROL/connected` | Connected to the broker (`device=… broker=…`, plus `downtime=…` after an outage). |
+| `CONTROL/disconnected` | The connection dropped (`reason=… error=…`); exmon reconnects by itself. |
+| `CONTROL/unreachable` | The chirp, every `control.chirpMinutes` while the broker can't be reached: `broker=… for=… reason=… attempts=… last="…"`. |
+| `CONTROL/tls_fallback` | The certificate's key can't do TLS 1.3's signatures; TLS 1.2 is used. |
+| `CONTROL/applied` | A signed document or command was applied (`kind=… version=… <result>`). For a cloud config, exmon then restarts in-process. |
+| `CONTROL/config_committed` | A new cloud config ran healthily for 2 minutes and is final. |
+| `CONTROL/rejected` | A document was refused (`kind=… reason="…"`). |
+| `CONTROL/failed` | A valid document couldn't be applied (`kind=… version=… error="…"`). |
+| `CONTROL/state_error` | The control state file couldn't be saved. |
+| `CONTROL/trace_now` | A `trace-now` command asked the path tracer for a trace. |
+| `CONTROL/helper_started` | exmon started `exmon-helper` so it grants access to the certificate's key (`reason=key_access` or `daily`). |
+| `CONTROL/helper_failed` | Starting `exmon-helper` failed (`reason=… error=…`); is it installed? |
+| `CONTROL/scheduled` | A document was accepted for later (an update waiting for its turn): `kind=… version=… <when>`. |
+
+### Updates (source `update`)
+
+See [Updates](../updates.md).
+
+| Kind | Meaning |
+|---|---|
+| `UPDATE/downloading` | This device's turn came: downloading `version=…` from the host. |
+| `UPDATE/verified` | Size, SHA-256, code signature and publisher are all correct. |
+| `UPDATE/handed_over` | The download passed exmon's checks and was handed to `exmon-helper`, which checks it again and installs it (its messages are in the Application event log, source `exmon-helper`). |
+| `UPDATE/healthy` | The new version ran for 2 minutes and connected to the control plane; the update is final. |
+| `UPDATE/test_unhealthy` | Test builds only (`-tags exmondev` with `devNeverHealthy=yes`): this version deliberately never reports healthy, so the helper rolls it back ([test setup](../deploy/test-install.md#a-rollback)). |
+| `UPDATE/failed` | A step failed (`step=download|verify|handover|health error=…`); the running version is unchanged. |
+| `UPDATE/rolled_back` | The new version wasn't healthy in time; the old exe was put back (logged by the old version when it starts). |
 
 ### Metrics (`METRICS`)
 

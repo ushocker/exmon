@@ -77,6 +77,18 @@ HTTP/2 is used when the server offers it, as a browser would. The timeout is thr
 
 Metrics (subject = test name): `http_total_ms`, `http_ttfb_ms`, `http_tls_ms`, `http_ok`.
 
+## Addresses probes never contact
+
+Whatever the config says, probes (and path traces) refuse these addresses, checked after DNS, so a name that resolves to one is refused too:
+
+- `169.254.0.0/16` and `fe80::/10` (link-local), which include the **cloud metadata service** at `169.254.169.254` that hands out credentials on cloud VMs;
+- `168.63.129.16` (Azure's host "wire server");
+- unspecified (`0.0.0.0`, `::`) and multicast addresses.
+
+The result line says `address is not allowed as a probe target`. Loopback (`127.0.0.1`) is allowed, so local services can be checked. HTTP tests follow at most **5 redirects**.
+
+These limits exist because probe targets can come from a [cloud config](../control-plane.md#cloud-config); they apply to local configs too.
+
 ## Down and up
 
 When a probe's state flips, an extra line is written:

@@ -95,6 +95,8 @@ Most monitors only write when something **changes**, plus a periodic status ("he
 
 ## Next steps
 
+For a managed fleet (central config, updates, events in Log Analytics), start with the [test setup](deploy/test-install.md).
+
 - Add probe targets for the services your users depend on: [Connectivity probes](monitors/probes.md).
 - Run [baseline mode](baseline.md) for a day to learn what normal looks like.
 - Add triggers so problems are captured automatically: [Incidents](incidents.md).

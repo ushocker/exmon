@@ -187,3 +187,23 @@ func TestDownReannouncedWhenLive(t *testing.T) {
 		t.Errorf("want PROBE/down re-announced when live; got %v", l.lines)
 	}
 }
+
+func TestBlockedTargets(t *testing.T) {
+	for _, s := range []string{"169.254.169.254", "168.63.129.16", "fe80::1", "224.0.0.1", "0.0.0.0"} {
+		if !blocked(net.ParseIP(s)) {
+			t.Errorf("%s should be blocked", s)
+		}
+	}
+	for _, s := range []string{"127.0.0.1", "10.1.2.3", "20.190.1.1", "2001:db8::1"} {
+		if blocked(net.ParseIP(s)) {
+			t.Errorf("%s should be allowed", s)
+		}
+	}
+	r := checkEndpoint(context.Background(), Endpoint{Name: "imds", Target: "169.254.169.254", Port: 80}, 1, time.Second)
+	if r.up || !strings.Contains(r.detail, "not allowed") {
+		t.Errorf("metadata endpoint probed: %s", r.detail)
+	}
+	if _, err := resolve4("169.254.169.254"); err == nil {
+		t.Error("tracer must refuse the metadata address")
+	}
+}

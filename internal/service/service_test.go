@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,5 +118,73 @@ func TestHandlerPreShutdown(t *testing.T) {
 	close(status)
 	if special || code != 0 {
 		t.Errorf("exit = %v/%d, want a clean stop", special, code)
+	}
+}
+
+func TestTakeProxyFlag(t *testing.T) {
+	rest, proxy, set, err := takeProxyFlag([]string{"--probe-interval-seconds", "60", "--proxy", "http://p:8080", "--baseline"})
+	if err != nil || !set || proxy != "http://p:8080" || strings.Join(rest, " ") != "--probe-interval-seconds 60 --baseline" {
+		t.Errorf("got %v %q %v %v", rest, proxy, set, err)
+	}
+	if _, proxy, set, _ := takeProxyFlag([]string{"-proxy="}); !set || proxy != "" {
+		t.Errorf("--proxy= should mean remove: %q %v", proxy, set)
+	}
+	if _, _, set, _ := takeProxyFlag([]string{"--baseline"}); set {
+		t.Error("no --proxy given")
+	}
+	for _, bad := range [][]string{{"--proxy"}, {"--proxy", "proxy.corp:8080"}} {
+		if _, _, _, err := takeProxyFlag(bad); err == nil {
+			t.Errorf("%v should fail", bad)
+		}
+	}
+}
+
+func TestFolderPermissions(t *testing.T) {
+	const svc = "S-1-5-80-1-2-3-4-5"
+	folders := LockedFolders(svc)
+	data := DataDir()
+	want := map[string]struct {
+		users bool
+		svc   string // "" = no access
+	}{
+		data:                                          {true, modify},
+		filepath.Join(data, "config"):                 {false, readExecute},
+		filepath.Join(data, "config", "cloud"):        {false, modify},
+		filepath.Join(data, "state"):                  {false, modify},
+		filepath.Join(data, "update"):                 {false, ""},
+		filepath.Join(data, "update", "incoming"):     {false, modify},
+		filepath.Join(data, "update", "status"):       {false, readExecute},
+		filepath.Join(data, "update", "verified"):     {false, ""},
+		filepath.Join(data, "update", "helper-state"): {false, ""},
+	}
+	if len(folders) != len(want) {
+		t.Errorf("folders = %d, want %d", len(folders), len(want))
+	}
+	for path, w := range want {
+		sddl, ok := folders[path]
+		if !ok {
+			t.Errorf("%s missing", path)
+			continue
+		}
+		if got := strings.Contains(sddl, ";;;BU)"); got != w.users {
+			t.Errorf("%s: users can read = %v, want %v", path, got, w.users)
+		}
+		hasSvc := strings.Contains(sddl, ";;;"+svc+")")
+		if (w.svc != "") != hasSvc || (hasSvc && !strings.Contains(sddl, w.svc+";;;"+svc)) {
+			t.Errorf("%s: service access wrong in %s (want %q)", path, sddl, w.svc)
+		}
+	}
+	// Before the service exists, nothing grants it access.
+	for p, sddl := range LockedFolders("") {
+		if strings.Contains(sddl, "S-1-5-80") {
+			t.Errorf("%s grants an unknown service: %s", p, sddl)
+		}
+	}
+}
+
+func TestHelperSDDL(t *testing.T) {
+	sddl := helperSDDL("S-1-5-80-9")
+	if !strings.Contains(sddl, "(A;;LCRP;;;S-1-5-80-9)") || strings.Contains(sddl, "WP;;;S-1-5-80-9") {
+		t.Errorf("exmon must only query and start the helper: %s", sddl)
 	}
 }

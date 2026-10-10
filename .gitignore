@@ -1,6 +1,35 @@
+# Builds: every exe, and the dist folder (test builds, release builds, the
+# test-PC folder dist\testpc and the Intune package folder dist\prod-package).
+*.exe
+/dist/
+# Intune packaging output (IntuneWinAppUtil).
+*.intunewin
+/out/
+/exmon-package/
+
+# Local test runs.
 test.log
+/*.log
 baseline*.jsonl
 baseline-summary.txt
-*.exe
-/reference/
 /exmon.json
+# Throwaway cloud configs made while testing (e.g. cloud-test.json). Keep real
+# fleet configs in configs/ instead.
+/cloud-*.json
+
+# Original sources this was ported from (kept locally, not in the repo).
+/reference/
+
+# Certificates, keys and requests made on the admin workstation. Only the
+# production PUBLIC keys in internal/signdoc/trust are committed.
+/*.pem
+/*.csr
+/*.cer
+/*.pfx
+/internal/signdoc/trust-dev/**/*.pem
+
+# exmonctl profiles (subscription and resource names per environment).
+/exmonctl*.json
+
+# Cloud Shell settings files, if copied down.
+*.env

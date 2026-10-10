@@ -14,12 +14,14 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"exmon/internal/baseline"
+	"exmon/internal/control"
 	"exmon/internal/eventlog"
 	"exmon/internal/incident"
 	"exmon/internal/nic"
 	"exmon/internal/power"
 	"exmon/internal/probe"
 	"exmon/internal/remote"
+	"exmon/internal/remote/senders"
 	"exmon/internal/safepath"
 	"exmon/internal/vpn"
 	"exmon/internal/wifi"
@@ -32,12 +34,13 @@ type Options struct {
 	Log      eventlog.Config `json:"log"`
 	WiFi     wifi.Config     `json:"wifi"`
 	Incident incident.Config `json:"incident"`
-	Remote   remote.Config   `json:"remote"`
+	Remotes  remote.Remotes  `json:"remotes"`
 	Baseline baseline.Config `json:"baseline"`
 	NIC      nic.Config      `json:"nic"`
 	VPN      vpn.Config      `json:"vpn"`
 	Probe    probe.Config    `json:"probe"`
 	Power    power.Config    `json:"power"`
+	Control  control.Config  `json:"control"`
 
 	// OutputRoots are extra folders the service may write its outputs to, besides
 	// %ProgramData%\exmon (see CheckOutputs). Console mode doesn't use them.
@@ -45,6 +48,8 @@ type Options struct {
 
 	// Not settings: what Load found or was asked to do.
 	ConfigFile         string   `json:"-"` // the config file that was loaded; "" = built-in defaults
+	CloudVersion       int64    `json:"-"` // version of the cloud config layer in use; 0 = none
+	CloudSummary       string   `json:"-"` // e.g. "version 2026… (probe, remotes)", for the startup log
 	ConfigWarnings     []string `json:"-"` // config files skipped because they failed the trust check
 	WriteDefaultConfig string   `json:"-"` // set by --write-default-config: where to write a starter config
 }
@@ -55,12 +60,13 @@ func Defaults() Options {
 		Log:      eventlog.DefaultConfig(),
 		WiFi:     wifi.DefaultConfig(),
 		Incident: incident.DefaultConfig(),
-		Remote:   remote.DefaultConfig(),
+		Remotes:  remote.DefaultRemotes(),
 		Baseline: baseline.DefaultConfig(),
 		NIC:      nic.DefaultConfig(),
 		VPN:      vpn.DefaultConfig(),
 		Probe:    probe.DefaultConfig(),
 		Power:    power.DefaultConfig(),
+		Control:  control.DefaultConfig(),
 	}
 }
 
@@ -83,6 +89,13 @@ type TrustFunc func(path string) error
 //   - An untrusted machine-wide config is an error: running a config someone may
 //     have tampered with is worse than not starting.
 func LoadWith(args []string, trust TrustFunc) (Options, error) {
+	return loadWith(args, trust, nil)
+}
+
+// loadWith is LoadWith; cloud, if not nil, replaces the active cloud config
+// (TestCloud uses it to try a newly received one).
+func loadWith(args []string, trust TrustFunc, cloud *CloudPayload) (Options, error) {
+	senders.RegisterAll() // remote target types must be known before "remotes" is validated
 	opts := Defaults()
 
 	// The flags write into a separate copy. Only flags the user actually typed are
@@ -114,11 +127,9 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 	flags.IntVar(&ff.Incident.WindowMinutes, "incident-window-minutes", ff.Incident.WindowMinutes, "minutes of history kept for incidents")
 	flags.IntVar(&ff.Incident.PostTriggerSeconds, "incident-post-seconds", ff.Incident.PostTriggerSeconds, "seconds to keep recording after a trigger")
 
-	flags.BoolVar(&ff.Remote.Enabled, "remote-enabled", ff.Remote.Enabled, "forward selected events to the remote target")
-	flags.StringVar(&ff.Remote.Outbox, "remote-outbox", ff.Remote.Outbox, "stand-in remote: file that receives sent events")
-	flags.StringVar(&ff.Remote.SpoolDir, "remote-spool-dir", ff.Remote.SpoolDir, "on-disk queue for events waiting to be sent")
-	flags.IntVar(&ff.Remote.RetryMaxMinutes, "remote-retry-max-minutes", ff.Remote.RetryMaxMinutes, "longest wait between send retries")
-	flags.BoolVar(&ff.Remote.SimulateOffline, "remote-simulate-offline", ff.Remote.SimulateOffline, "testing: make every send fail")
+	// These two apply to every remote in the "remotes" list.
+	remotesEnabled := flags.Bool("remotes-enabled", true, "forward events to the configured remotes; false turns every remote off")
+	remotesOffline := flags.Bool("remote-simulate-offline", false, "testing: make every remote's sends fail")
 
 	flags.BoolVar(&ff.Baseline.Enabled, "baseline", ff.Baseline.Enabled, "learning mode: record every event and metric to the baseline file")
 	flags.StringVar(&ff.Baseline.Path, "baseline-path", ff.Baseline.Path, "baseline .jsonl file")
@@ -130,6 +141,15 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 	flags.IntVar(&ff.Probe.IntervalSeconds, "probe-interval-seconds", ff.Probe.IntervalSeconds, "seconds between probe rounds")
 	flags.IntVar(&ff.Probe.PathTrace.IntervalMinutes, "probe-path-trace-minutes", ff.Probe.PathTrace.IntervalMinutes, "minutes between periodic path traces; 0 = off")
 	flags.BoolVar(&ff.Power.Enabled, "power-enabled", ff.Power.Enabled, "hold events while starting, waking from sleep or shutting down, until the network is ready")
+
+	flags.BoolVar(&ff.Control.Enabled, "control-enabled", ff.Control.Enabled, "connect to the control plane (MQTT over WebSockets to Event Grid)")
+	flags.StringVar(&ff.Control.Host, "control-host", ff.Control.Host, "control plane host, e.g. exmon-prod.eastus-1.ts.eventgrid.azure.net (also turns the control plane on)")
+	flags.StringVar(&ff.Control.Path, "control-path", ff.Control.Path, "control plane WebSocket path")
+	flags.StringVar(&ff.Control.Cert.SubjectCN, "control-cert-subject", ff.Control.Cert.SubjectCN, "use the client certificate with this common name")
+	flags.StringVar(&ff.Control.Cert.IssuerCN, "control-cert-issuer", ff.Control.Cert.IssuerCN, "use a client certificate issued by the CA with this common name")
+	updateHosts := flags.String("update-hosts", "", "comma-separated hosts updates may be downloaded from (also turns updates on)")
+	flags.StringVar(&ff.Control.Update.PublisherCN, "update-publisher", ff.Control.Update.PublisherCN, "common name of the code-signing certificate updates must carry")
+	flags.BoolVar(&ff.Control.Update.RequireAuthenticode, "update-require-authenticode", ff.Control.Update.RequireAuthenticode, "require a valid code signature on updates (false only for unsigned test builds)")
 
 	if err := flags.Parse(args); err != nil {
 		return opts, err
@@ -171,6 +191,45 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 		}
 	}
 
+	// The cloud config layer (between the local file and the flags) is used only
+	// when the control plane is on, locally or by flag.
+	cloudOn := opts.Control.Enabled
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "control-host" || f.Name == "control-enabled" {
+			cloudOn = ff.Control.Enabled || ff.Control.Host != ""
+		}
+	})
+	if cloudOn {
+		explicit := cloud != nil
+		if cloud == nil {
+			keys, err := cloudKeys()
+			if err == nil {
+				cloud, err = readCloud(keys)
+			}
+			if err != nil {
+				// A stored cloud config that no longer verifies (changed on disk, or its
+				// key was removed in this build) is ignored, not fatal: the local config
+				// still runs, and the control plane can send a new one.
+				opts.ConfigWarnings = append(opts.ConfigWarnings, "ignored the cloud config: "+err.Error())
+				cloud = nil
+			}
+		}
+		if cloud != nil {
+			err := checkCloudLayer(cloud.Config)
+			if err == nil {
+				err = applyCloud(cloud.Config, &opts)
+			}
+			switch {
+			case err != nil && explicit:
+				return opts, err
+			case err != nil:
+				opts.ConfigWarnings = append(opts.ConfigWarnings, "ignored the cloud config: "+err.Error())
+			default:
+				opts.CloudVersion, opts.CloudSummary = cloud.Version, describeCloud(cloud)
+			}
+		}
+	}
+
 	// flags.Visit calls the function once for each flag that was actually set.
 	// Each case copies one value from the flag copy (ff) onto opts.
 	overrides := map[string]func(){
@@ -191,11 +250,17 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 		"incident-dir":             func() { opts.Incident.Dir = ff.Incident.Dir },
 		"incident-window-minutes":  func() { opts.Incident.WindowMinutes = ff.Incident.WindowMinutes },
 		"incident-post-seconds":    func() { opts.Incident.PostTriggerSeconds = ff.Incident.PostTriggerSeconds },
-		"remote-enabled":           func() { opts.Remote.Enabled = ff.Remote.Enabled },
-		"remote-outbox":            func() { opts.Remote.Outbox = ff.Remote.Outbox },
-		"remote-spool-dir":         func() { opts.Remote.SpoolDir = ff.Remote.SpoolDir },
-		"remote-retry-max-minutes": func() { opts.Remote.RetryMaxMinutes = ff.Remote.RetryMaxMinutes },
-		"remote-simulate-offline":  func() { opts.Remote.SimulateOffline = ff.Remote.SimulateOffline },
+		"remotes-enabled": func() {
+			for i := range opts.Remotes {
+				on := *remotesEnabled // a new variable each time, so each remote gets its own pointer
+				opts.Remotes[i].Enabled = &on
+			}
+		},
+		"remote-simulate-offline": func() {
+			for i := range opts.Remotes {
+				opts.Remotes[i].SimulateOffline = *remotesOffline
+			}
+		},
 		"baseline":                 func() { opts.Baseline.Enabled = ff.Baseline.Enabled },
 		"baseline-path":            func() { opts.Baseline.Path = ff.Baseline.Path },
 		"baseline-summary-minutes": func() { opts.Baseline.SummaryMinutes = ff.Baseline.SummaryMinutes },
@@ -205,6 +270,20 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 		"probe-interval-seconds":   func() { opts.Probe.IntervalSeconds = ff.Probe.IntervalSeconds },
 		"probe-path-trace-minutes": func() { opts.Probe.PathTrace.IntervalMinutes = ff.Probe.PathTrace.IntervalMinutes },
 		"power-enabled":            func() { opts.Power.Enabled = ff.Power.Enabled },
+		"control-enabled":          func() { opts.Control.Enabled = ff.Control.Enabled },
+		"control-host": func() {
+			opts.Control.Host = ff.Control.Host
+			opts.Control.Enabled = ff.Control.Host != ""
+		},
+		"control-path":         func() { opts.Control.Path = ff.Control.Path },
+		"control-cert-subject": func() { opts.Control.Cert.SubjectCN = ff.Control.Cert.SubjectCN },
+		"control-cert-issuer":  func() { opts.Control.Cert.IssuerCN = ff.Control.Cert.IssuerCN },
+		"update-hosts": func() {
+			opts.Control.Update.AllowedHosts = splitList(*updateHosts)
+			opts.Control.Update.Enabled = len(opts.Control.Update.AllowedHosts) > 0
+		},
+		"update-publisher":            func() { opts.Control.Update.PublisherCN = ff.Control.Update.PublisherCN },
+		"update-require-authenticode": func() { opts.Control.Update.RequireAuthenticode = ff.Control.Update.RequireAuthenticode },
 	}
 	flags.Visit(func(f *flag.Flag) {
 		if set, ok := overrides[f.Name]; ok {
@@ -212,8 +291,16 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 		}
 	})
 
+	// Fill in each remote's unset settings (list items can't inherit defaults).
+	for i := range opts.Remotes {
+		opts.Remotes[i].ApplyDefaults()
+	}
+
 	// Expand %VAR% in every path. A slice of pointers lets one loop update them all.
-	paths := []*string{&opts.Log.Path, &opts.Incident.Dir, &opts.Remote.Outbox, &opts.Remote.SpoolDir, &opts.Baseline.Path}
+	paths := []*string{&opts.Log.Path, &opts.Incident.Dir, &opts.Baseline.Path}
+	for i := range opts.Remotes {
+		paths = append(paths, &opts.Remotes[i].SpoolDir)
+	}
 	for i := range opts.OutputRoots {
 		paths = append(paths, &opts.OutputRoots[i])
 	}
@@ -228,6 +315,17 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 	return opts, opts.Validate()
 }
 
+// splitList splits a comma-separated flag value, dropping empty items.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // output is one configured output location, for CheckOutputs.
 type output struct{ setting, path string }
 
@@ -237,8 +335,17 @@ func (o Options) outputs() []output {
 	if o.Incident.Enabled {
 		out = append(out, output{"incident.dir", o.Incident.Dir})
 	}
-	if o.Remote.Enabled {
-		out = append(out, output{"remote.spoolDir", o.Remote.SpoolDir}, output{"remote.outbox", o.Remote.Outbox})
+	for _, r := range o.Remotes {
+		if !r.IsEnabled() {
+			continue
+		}
+		paths, err := r.Outputs()
+		if err != nil {
+			continue // Validate reports bad settings
+		}
+		for _, p := range paths {
+			out = append(out, output{"remotes[" + r.Name + "]", p})
+		}
 	}
 	if o.Baseline.Enabled {
 		out = append(out, output{"baseline.path", o.Baseline.Path})
@@ -286,7 +393,7 @@ func (o Options) Validate() error {
 	}
 	// errors.Join combines several errors into one (nil ones are ignored).
 	return errors.Join(o.Log.Validate(), o.WiFi.Validate(), o.NIC.Validate(), o.VPN.Validate(),
-		o.Probe.Validate(), o.Power.Validate(), o.Incident.Validate(), o.Remote.Validate(), o.Baseline.Validate())
+		o.Probe.Validate(), o.Power.Validate(), o.Incident.Validate(), o.Remotes.Validate(), o.Baseline.Validate(), o.Control.Validate())
 }
 
 // DefaultConfigPath is the machine-wide config location (%VAR% not yet expanded).
@@ -368,6 +475,21 @@ func loadFile(path string, opts *Options) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
+	}
+	// First look at the top-level keys only. json.RawMessage keeps each value as
+	// undecoded bytes, which is all we need to see which keys are present.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	// The old single "remote" section would otherwise be silently ignored.
+	if _, old := top["remote"]; old {
+		return fmt.Errorf(`%s: "remote" was replaced by "remotes", a list of remotes each with a name and type; see docs/remote.md#migrating-from-remote`, path)
+	}
+	// A "remotes" list in the file replaces the default list rather than merging
+	// item by item with it.
+	if _, ok := top["remotes"]; ok {
+		opts.Remotes = nil
 	}
 	if err := json.Unmarshal(b, opts); err != nil {
 		return fmt.Errorf("%s: %w", path, err)

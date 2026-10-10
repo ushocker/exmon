@@ -30,12 +30,24 @@ var metricDirections = map[string]event.Direction{
 // Source implements source.Source for the connectivity probes.
 type Source struct {
 	cfg     Config
+	now     chan struct{}   // Trigger: run a round now
 	wasUp   map[string]bool // probe name -> up at the last round, for down/up transitions
 	wasHeld bool            // the previous round's events were held (starting, waking)
 }
 
 // New creates the probe source.
-func New(cfg Config) *Source { return &Source{cfg: cfg, wasUp: map[string]bool{}} }
+func New(cfg Config) *Source {
+	return &Source{cfg: cfg, wasUp: map[string]bool{}, now: make(chan struct{}, 1)}
+}
+
+// Trigger asks for a probe round now (the control plane's check-now command). It
+// never blocks: if a request is already waiting, one round serves both.
+func (s *Source) Trigger() {
+	select {
+	case s.now <- struct{}{}:
+	default:
+	}
+}
 
 // Name implements source.Source.
 func (s *Source) Name() string { return "probe" }
@@ -51,6 +63,7 @@ func (s *Source) Run(ctx context.Context, log event.Logger) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+		case <-s.now:
 		}
 	}
 }

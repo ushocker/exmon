@@ -3,6 +3,7 @@ package config
 import (
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -12,8 +13,8 @@ func outputOpts(dataDir string) Options {
 	o := Defaults()
 	o.Log.Path = filepath.Join(dataDir, "exmon.log")
 	o.Incident.Dir = filepath.Join(dataDir, "incidents")
-	o.Remote.SpoolDir = filepath.Join(dataDir, "remote-spool")
-	o.Remote.Outbox = filepath.Join(dataDir, "remote-outbox.jsonl")
+	o.Remotes[0].SpoolDir = filepath.Join(dataDir, "remote-spool", "outbox")
+	o.Remotes[0].Settings = []byte(`{"path": ` + strconv.Quote(filepath.Join(dataDir, "remote-outbox.jsonl")) + `}`)
 	o.Baseline.Enabled = true
 	o.Baseline.Path = filepath.Join(dataDir, "baseline.jsonl")
 	return o

@@ -26,7 +26,9 @@ import (
 	"exmon/internal/probe"
 	"exmon/internal/remote"
 	"exmon/internal/service"
+	"exmon/internal/signdoc"
 	"exmon/internal/source"
+	"exmon/internal/version"
 	"exmon/internal/vpn"
 	"exmon/internal/wifi"
 	"exmon/internal/winsys"
@@ -87,7 +89,8 @@ func main() {
 	// stop exmon cleanly too.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, opts, false, func() {}, func(string) {}); err != nil {
+	sess := &session{args: os.Args[1:], trust: consoleTrust(winsys.IsElevated())}
+	if err := supervise(ctx, sess, opts, func() {}, func(string) {}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -109,6 +112,9 @@ var subcommands = map[string]func(args []string) error{
 	"install":   func(args []string) error { return service.Install(args, os.Stdout) },
 	"uninstall": func([]string) error { return service.Uninstall(os.Stdout) },
 	"status":    func([]string) error { return service.Status(os.Stdout) },
+	"enroll":    enrollCmd, // test-device certificates; see enrollcmd.go
+	// Prints the version; exmon-helper asks the installed exe this before an update.
+	"version": func([]string) error { fmt.Println(version.Version); return nil },
 }
 
 // runService is exmon as the Windows Service runs it. The flags come from the
@@ -143,17 +149,21 @@ func runService(ctx context.Context, ready func(), elog service.EventLog) error 
 		elog.Info(service.EventStarted, "exmon started; config: "+cfg+"; log: "+opts.Log.Path)
 		ready()
 	}
-	return run(ctx, opts, true, started, warn)
+	sess := &session{args: os.Args[1:], trust: service.Trust, asService: true}
+	return supervise(ctx, sess, opts, started, warn)
 }
 
 // run is exmon itself, in console or service mode. It calls ready once the
 // monitors have started and returns after ctx is cancelled and everything has shut
 // down. warn reports problems somewhere visible (the event log for a service).
-func run(ctx context.Context, opts config.Options, asService bool, ready func(), warn func(string)) error {
+// sess (nil in tests) lets the control plane restart exmon after a new cloud config.
+func run(ctx context.Context, opts config.Options, asService bool, ready func(), warn func(string), sess *session) error {
 	bus := event.NewBus()
 	dev := device.Get(asService)
 	opts.Incident.Device = func() string { return dev.Refresh(asService).String() }
-	opts.Remote.Host = dev.Computer
+	for i := range opts.Remotes {
+		opts.Remotes[i].Host = dev.Computer
+	}
 
 	// Consumers subscribe before anything is published. Each adds a "wait" function
 	// to stops; at shutdown they run in reverse order, so the log file goes last.
@@ -204,15 +214,19 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 		stops = append(stops, tracer.Wait)
 	}
 
-	if opts.Remote.Enabled {
-		// TODO: replace OutboxSender with the real remote target (opts.Remote.Endpoint).
-		var sender remote.Sender = remote.OutboxSender{Path: opts.Remote.Outbox}
-		if opts.Remote.SimulateOffline {
-			sender = remote.FailingSender{}
+	// One queue per enabled remote, each with its own subscription and spool, so a
+	// slow or offline remote never holds up another.
+	for _, rc := range opts.Remotes {
+		if !rc.IsEnabled() {
+			continue
 		}
-		queue, err := remote.Start(opts.Remote, bus.Subscribe("remote", busBuffer, event.Blocking), sender, bus.For("remote"))
+		sender, err := remote.NewSender(rc, bus.For("remote"))
 		if err != nil {
-			return fail("remote", err)
+			return fail("remote "+rc.Name, err)
+		}
+		queue, err := remote.Start(rc, bus.Subscribe("remote:"+rc.Name, busBuffer, event.Blocking), sender, bus.For("remote"))
+		if err != nil {
+			return fail("remote "+rc.Name, err)
 		}
 		stops = append(stops, queue.Wait)
 	}
@@ -228,8 +242,17 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 	if opts.VPN.Enabled {
 		sources = append(sources, vpn.New(opts.VPN))
 	}
+	var prober *probe.Source
 	if opts.Probe.Enabled {
-		sources = append(sources, probe.New(opts.Probe))
+		prober = probe.New(opts.Probe)
+		sources = append(sources, prober)
+	}
+	if opts.Control.Enabled {
+		ctl, err := newControl(ctx, opts, bus, prober, sess)
+		if err != nil {
+			return fail("control", err)
+		}
+		sources = append(sources, ctl)
 	}
 
 	// exmon's own lines are never held: they explain what is going on.
@@ -247,6 +270,9 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 	} else {
 		log.Log("MONITOR", fmt.Sprintf("config: none found (looked in %s); using built-in defaults",
 			strings.Join(config.SearchPaths(), ", ")))
+	}
+	if opts.CloudVersion > 0 {
+		log.Log("MONITOR", "cloud config: "+opts.CloudSummary)
 	}
 	log.Log("DEVICE", dev.String())
 	describe(log, opts)
@@ -276,6 +302,9 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 		}()
 	}
 	ready() // monitors are running (each retries on its own if Windows isn't ready yet)
+	if sess != nil {
+		go commitPending(ctx, bus.ForUnheld("control")) // a new cloud config becomes final after running healthily
+	}
 
 	// Wait for Ctrl+C, a service Stop, or Windows shutting down. From then on, hold
 	// monitor events: networks going away during shutdown is expected.
@@ -321,12 +350,25 @@ func describe(log event.Logger, o config.Options) {
 		log.Log("MONITOR", fmt.Sprintf("incidents: %d trigger(s), window %dm + %ds, saving to %s",
 			len(o.Incident.Triggers), o.Incident.WindowMinutes, o.Incident.PostTriggerSeconds, o.Incident.Dir))
 	}
-	if o.Remote.Enabled {
-		target := "outbox " + o.Remote.Outbox
-		if o.Remote.SimulateOffline {
-			target = "SIMULATED OFFLINE"
+	for _, r := range o.Remotes {
+		if !r.IsEnabled() {
+			continue
 		}
-		log.Log("MONITOR", fmt.Sprintf("remote: %s, spool %s, retry up to every %dm", target, o.Remote.SpoolDir, o.Remote.RetryMaxMinutes))
+		// Describe never prints secrets: each sender type decides what is safe to show.
+		target := r.Type + " " + remote.Describe(r)
+		if r.SimulateOffline {
+			target = r.Type + " SIMULATED OFFLINE"
+		}
+		log.Log("MONITOR", fmt.Sprintf("remote %s: %s, %d selector(s), spool %s, retry up to every %dm",
+			r.Name, target, len(r.Include), r.SpoolDir, r.RetryMaxMinutes))
+	}
+	if o.Control.Enabled {
+		cert := o.Control.Cert.SubjectCN
+		if cert == "" {
+			cert = "any from " + o.Control.Cert.IssuerCN
+		}
+		log.Log("MONITOR", fmt.Sprintf("control: wss://%s:%d%s, certificate %s, signing keys %s, chirp every %dm",
+			o.Control.Host, o.Control.Port, o.Control.Path, cert, signdoc.KeySetName(), o.Control.ChirpMinutes))
 	}
 	if o.Baseline.Enabled {
 		log.Log("MONITOR", fmt.Sprintf("baseline: recording to %s, summary every %dm in %s",
