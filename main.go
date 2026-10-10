@@ -26,6 +26,7 @@ import (
 	"exmon/internal/probe"
 	"exmon/internal/remote"
 	"exmon/internal/service"
+	"exmon/internal/services"
 	"exmon/internal/signdoc"
 	"exmon/internal/source"
 	"exmon/internal/version"
@@ -242,6 +243,9 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 	if opts.VPN.Enabled {
 		sources = append(sources, vpn.New(opts.VPN))
 	}
+	if opts.Services.Enabled && len(opts.Services.Watch) > 0 {
+		sources = append(sources, services.New(opts.Services))
+	}
 	var prober *probe.Source
 	if opts.Probe.Enabled {
 		prober = probe.New(opts.Probe)
@@ -345,6 +349,14 @@ func describe(log event.Logger, o config.Options) {
 		}
 		log.Log("MONITOR", fmt.Sprintf("probe: every %ds, %d dns name(s), %d endpoint(s), %d http test(s); path trace %s",
 			o.Probe.IntervalSeconds, len(o.Probe.DNSNames), len(o.Probe.Endpoints), len(o.Probe.HTTPTests), trace))
+	}
+	if o.Services.Enabled && len(o.Services.Watch) > 0 {
+		names := make([]string, len(o.Services.Watch))
+		for i, w := range o.Services.Watch {
+			names[i] = w.Name
+		}
+		log.Log("MONITOR", fmt.Sprintf("services: %s; every %ds, status every %dm",
+			strings.Join(names, ", "), o.Services.PollSeconds, o.Services.HeartbeatMinutes))
 	}
 	if o.Incident.Enabled {
 		log.Log("MONITOR", fmt.Sprintf("incidents: %d trigger(s), window %dm + %ds, saving to %s",

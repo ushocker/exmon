@@ -35,6 +35,16 @@
     ],
     "processNames": ["vpnui", "vpnagent", "PanGPA", "PanGPS", "ZSATunnel", "FortiClient", "dsNcService", "vpnc", "tailscaled"]
   },
+  "services": {
+    "enabled": true,
+    "pollSeconds": 30,
+    "heartbeatMinutes": 60,
+    "watch": [
+      { "name": "Dnscache" },
+      { "name": "MpsSvc" },
+      { "name": "wuauserv", "expect": "any" }
+    ]
+  },
   "probe": {
     "enabled": true,
     "intervalSeconds": 300,
@@ -74,7 +84,8 @@
       { "name": "endpoint-down",    "source": "probe", "metric": "reachable",          "op": "<",  "threshold": 1,                     "severity": 2 },
       { "name": "slow-http",        "source": "probe", "metric": "http_ttfb_ms",       "op": ">",  "threshold": 3000, "forSamples": 2, "severity": 4 },
       { "name": "nic-errors",       "source": "nic",   "metric": "in_errors",          "op": ">",  "threshold": 100,                   "severity": 3 },
-      { "name": "vpn-dropped",      "source": "vpn",   "metric": "vpn_up",             "op": "<",  "threshold": 1,                     "severity": 2 }
+      { "name": "vpn-dropped",      "source": "vpn",   "metric": "vpn_up",             "op": "<",  "threshold": 1,                     "severity": 2 },
+      { "name": "service-down",     "source": "services", "metric": "as_expected",    "op": "<",  "threshold": 1,    "forSamples": 2, "severity": 2 }
     ]
   },
   "remotes": [
@@ -93,7 +104,8 @@
       "include": [
         { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "ACM/scan_fail", "MSM/connected", "MSM/disconnected", "MSM/roaming_start", "MSM/roaming_end", "MSM/radio_state_change"] },
         { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
-        { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] }
+        { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] },
+        { "source": "services", "kinds": ["SERVICE/down", "SERVICE/up", "SERVICE/version_changed"] }
       ]
     },
     {
@@ -113,6 +125,7 @@
         { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "MSM/disconnected", "MSM/roaming_end"] },
         { "kinds": ["INCIDENT/*"] },
         { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] },
+        { "source": "services", "kinds": ["SERVICE/status", "SERVICE/down", "SERVICE/up", "SERVICE/changed", "SERVICE/version_changed", "SERVICE/error"] },
         { "source": "control", "kinds": ["CONTROL/unreachable", "CONTROL/connected", "CONTROL/applied", "CONTROL/rejected", "CONTROL/failed", "CONTROL/tls_fallback", "CONTROL/config_committed"] },
         { "source": "update" }
       ]

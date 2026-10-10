@@ -23,6 +23,7 @@ import (
 	"exmon/internal/remote"
 	"exmon/internal/remote/senders"
 	"exmon/internal/safepath"
+	"exmon/internal/services"
 	"exmon/internal/vpn"
 	"exmon/internal/wifi"
 )
@@ -38,6 +39,7 @@ type Options struct {
 	Baseline baseline.Config `json:"baseline"`
 	NIC      nic.Config      `json:"nic"`
 	VPN      vpn.Config      `json:"vpn"`
+	Services services.Config `json:"services"`
 	Probe    probe.Config    `json:"probe"`
 	Power    power.Config    `json:"power"`
 	Control  control.Config  `json:"control"`
@@ -64,6 +66,7 @@ func Defaults() Options {
 		Baseline: baseline.DefaultConfig(),
 		NIC:      nic.DefaultConfig(),
 		VPN:      vpn.DefaultConfig(),
+		Services: services.DefaultConfig(),
 		Probe:    probe.DefaultConfig(),
 		Power:    power.DefaultConfig(),
 		Control:  control.DefaultConfig(),
@@ -137,6 +140,8 @@ func loadWith(args []string, trust TrustFunc, cloud *CloudPayload) (Options, err
 
 	flags.BoolVar(&ff.NIC.Enabled, "nic-enabled", ff.NIC.Enabled, "monitor network adapters")
 	flags.BoolVar(&ff.VPN.Enabled, "vpn-enabled", ff.VPN.Enabled, "detect VPN tunnels")
+	flags.BoolVar(&ff.Services.Enabled, "services-enabled", ff.Services.Enabled, "check the Windows services listed in services.watch")
+	flags.IntVar(&ff.Services.PollSeconds, "services-poll-seconds", ff.Services.PollSeconds, "seconds between service checks")
 	flags.BoolVar(&ff.Probe.Enabled, "probe-enabled", ff.Probe.Enabled, "run connectivity probes (DNS, gateway, endpoints, HTTP)")
 	flags.IntVar(&ff.Probe.IntervalSeconds, "probe-interval-seconds", ff.Probe.IntervalSeconds, "seconds between probe rounds")
 	flags.IntVar(&ff.Probe.PathTrace.IntervalMinutes, "probe-path-trace-minutes", ff.Probe.PathTrace.IntervalMinutes, "minutes between periodic path traces; 0 = off")
@@ -266,6 +271,8 @@ func loadWith(args []string, trust TrustFunc, cloud *CloudPayload) (Options, err
 		"baseline-summary-minutes": func() { opts.Baseline.SummaryMinutes = ff.Baseline.SummaryMinutes },
 		"nic-enabled":              func() { opts.NIC.Enabled = ff.NIC.Enabled },
 		"vpn-enabled":              func() { opts.VPN.Enabled = ff.VPN.Enabled },
+		"services-enabled":         func() { opts.Services.Enabled = ff.Services.Enabled },
+		"services-poll-seconds":    func() { opts.Services.PollSeconds = ff.Services.PollSeconds },
 		"probe-enabled":            func() { opts.Probe.Enabled = ff.Probe.Enabled },
 		"probe-interval-seconds":   func() { opts.Probe.IntervalSeconds = ff.Probe.IntervalSeconds },
 		"probe-path-trace-minutes": func() { opts.Probe.PathTrace.IntervalMinutes = ff.Probe.PathTrace.IntervalMinutes },
@@ -393,7 +400,7 @@ func (o Options) Validate() error {
 	}
 	// errors.Join combines several errors into one (nil ones are ignored).
 	return errors.Join(o.Log.Validate(), o.WiFi.Validate(), o.NIC.Validate(), o.VPN.Validate(),
-		o.Probe.Validate(), o.Power.Validate(), o.Incident.Validate(), o.Remotes.Validate(), o.Baseline.Validate(), o.Control.Validate())
+		o.Services.Validate(), o.Probe.Validate(), o.Power.Validate(), o.Incident.Validate(), o.Remotes.Validate(), o.Baseline.Validate(), o.Control.Validate())
 }
 
 // DefaultConfigPath is the machine-wide config location (%VAR% not yet expanded).

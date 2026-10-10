@@ -70,6 +70,8 @@ Flags override the config file and the cloud config. Each has a setting in `exmo
 | `--wifi-neighbors` | false | Also log other access points with the same SSID. |
 | `--nic-enabled` | true | The [network adapter monitor](../monitors/nic.md). |
 | `--vpn-enabled` | true | [VPN detection](../monitors/vpn.md). |
+| `--services-enabled` | true | The [Windows services](../monitors/services.md) monitor (runs only when `services.watch` lists services). |
+| `--services-poll-seconds <n>` | 30 | Seconds between service checks. |
 | `--probe-enabled` | true | [Connectivity probes](../monitors/probes.md). |
 | `--probe-interval-seconds <n>` | 300 | Seconds between probe rounds. |
 | `--probe-path-trace-minutes <n>` | 30 | Minutes between [path traces](../monitors/path-trace.md); 0 = off. |

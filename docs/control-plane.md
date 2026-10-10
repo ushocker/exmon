@@ -162,9 +162,9 @@ As in a local file, keys the cloud config leaves out keep their value from below
 
 | Can set | Can't set (local config or install flags only) |
 |---|---|
-| `wifi`, `nic`, `vpn`, `probe`, `power`; `incident` except `dir`; `baseline` except `path`; `remotes` (without `spoolDir`); `control.chirpMinutes`, `control.statusMinutes` | `log`, `outputRoots`, `incident.dir`, `baseline.path`, any remote's `spoolDir`, `outbox` remotes (they write local files), everything else under `control` (broker, certificate) |
+| `wifi`, `nic`, `vpn`, `services`, `probe`, `power`; `incident` except `dir`; `baseline` except `path`; `remotes` (without `spoolDir`); `control.chirpMinutes`, `control.statusMinutes` | `log`, `outputRoots`, `incident.dir`, `baseline.path`, any remote's `spoolDir`, `outbox` remotes (they write local files), everything else under `control` (broker, certificate) |
 
-Stricter ranges also apply to what a cloud config sets: `probe.intervalSeconds` at least 60, `probe.pathTrace.intervalMinutes` at least 10 (or 0), Wi-Fi polls at least 2 s, adapter and VPN polls at least 10 s. With the usual limits (at most 25 endpoints, 25 HTTP tests and 10 DNS names) that caps a device at roughly 185 probe actions a minute, however a cloud config is written. Probes also never contact link-local, cloud-metadata or multicast addresses, and follow at most 5 redirects ([Probes](monitors/probes.md#addresses-probes-never-contact)).
+Stricter ranges also apply to what a cloud config sets: `probe.intervalSeconds` at least 60, `probe.pathTrace.intervalMinutes` at least 10 (or 0), Wi-Fi polls at least 2 s, adapter, VPN and service polls at least 10 s. With the usual limits (at most 25 endpoints, 25 HTTP tests and 10 DNS names) that caps a device at roughly 185 probe actions a minute, however a cloud config is written. Probes also never contact link-local, cloud-metadata or multicast addresses, and follow at most 5 redirects ([Probes](monitors/probes.md#addresses-probes-never-contact)).
 
 ### Applying one safely
 

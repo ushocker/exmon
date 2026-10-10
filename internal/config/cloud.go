@@ -37,6 +37,7 @@ var cloudAllowed = map[string][]string{
 	"wifi":     nil,
 	"nic":      nil,
 	"vpn":      nil,
+	"services": nil,
 	"probe":    nil,
 	"power":    nil,
 	"incident": {"enabled", "windowMinutes", "postTriggerSeconds", "cooldownSeconds", "maxIncidents", "maxIncidentsBySeverity", "maxHoldSeconds", "triggers"},
@@ -127,6 +128,7 @@ func validateCloud(o Options) error {
 		limits.Range("wifi.pollSeconds (cloud)", o.WiFi.PollSeconds, 2, 3600),
 		limits.Range("nic.pollSeconds (cloud)", o.NIC.PollSeconds, 10, 3600),
 		limits.Range("vpn.pollSeconds (cloud)", o.VPN.PollSeconds, 10, 3600),
+		limits.Range("services.pollSeconds (cloud)", o.Services.PollSeconds, 10, 3600),
 	}
 	if m := o.Probe.PathTrace.IntervalMinutes; m != 0 {
 		errs = append(errs, limits.Range("probe.pathTrace.intervalMinutes (cloud)", m, 10, 1440))

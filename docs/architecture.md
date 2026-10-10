@@ -93,6 +93,7 @@ The bus stamps the time when the event is published, not when it is written to d
 | `internal/wifi` | Wi-Fi source: notifications and polling in one `select` loop; change detection; frame stats; reconnect with backoff. |
 | `internal/nic` | Adapter source: change notifications + counter polling. |
 | `internal/vpn` | VPN source: RAS, adapter patterns, processes, routes. |
+| `internal/services` | Services source: state, start type and exe/ServiceDll version of each service in `services.watch`, via `winsys.QueryService` and `winsys.ReadFileVersion`. |
 | `internal/probe` | Probe source (DNS, gateway, endpoints, HTTP) and `Tracer` (path trace consumer). |
 | `internal/device` | Machine description for the DEVICE line, incident headers and remote `host`. |
 | `internal/wlan` | Windows WLAN API wrapper. One of only two packages allowed to use `unsafe`. |

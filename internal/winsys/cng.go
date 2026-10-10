@@ -72,8 +72,8 @@ const (
 	// Smart-card keys (e.g. a YubiKey through Windows' PIV minidriver) report
 	// their public key as an ECDH blob even though they sign with ECDSA; the
 	// X/Y layout is identical, only the magic differs.
-	magicECDHP256 = 0x314B4345 // "ECK1"
-	magicECDHP384 = 0x334B4345 // "ECK3"
+	magicECDHP256  = 0x314B4345 // "ECK1"
+	magicECDHP384  = 0x334B4345 // "ECK3"
 	magicRSAPublic = 0x31415352 // "RSA1"
 )
 
