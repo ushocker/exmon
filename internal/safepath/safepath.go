@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/windows"
 )
 
 // Within reports whether path is root itself or inside it. Both are made absolute
@@ -66,4 +68,32 @@ func CheckNoLinks(root, path string) error {
 		}
 	}
 	return nil
+}
+
+// LocalDrive reports whether p is an absolute path on a local drive letter:
+// C:\... or the long form \\?\C:\... (either slash). Everything else counts as
+// possibly remote and is never opened: \\server\share, \\?\UNC\..., \\.\UNC\...,
+// \\?\GLOBALROOT\Device\Mup\..., a drive-relative C:x, and a drive letter Windows
+// reports as a network drive. Opening such a path would make the PC connect to
+// that server.
+func LocalDrive(p string) bool {
+	l := strings.ReplaceAll(p, `/`, `\`)
+	l = strings.TrimPrefix(l, `\\?\`)
+	if len(l) < 3 || l[1] != ':' || l[2] != '\\' {
+		return false
+	}
+	c := l[0] | 0x20 // lower case
+	if c < 'a' || c > 'z' {
+		return false
+	}
+	return !remoteDrive(l[:3])
+}
+
+// remoteDrive asks Windows whether a drive root such as C:\ is a network drive.
+func remoteDrive(root string) bool {
+	r, err := windows.UTF16PtrFromString(root)
+	if err != nil {
+		return true
+	}
+	return windows.GetDriveType(r) == windows.DRIVE_REMOTE
 }

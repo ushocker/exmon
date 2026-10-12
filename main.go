@@ -26,6 +26,7 @@ import (
 	"exmon/internal/probe"
 	"exmon/internal/remote"
 	"exmon/internal/service"
+	"exmon/internal/services"
 	"exmon/internal/source"
 	"exmon/internal/vpn"
 	"exmon/internal/wifi"
@@ -233,6 +234,9 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 	}
 	if opts.VPN.Enabled {
 		sources = append(sources, vpn.New(opts.VPN))
+	}
+	if opts.Services.Enabled {
+		sources = append(sources, services.New(opts.Services))
 	}
 	if opts.Probe.Enabled {
 		sources = append(sources, probe.New(opts.Probe))

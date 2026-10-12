@@ -58,6 +58,19 @@ See [Wi-Fi monitor](../monitors/wifi.md).
 | `VPN/connected`, `VPN/disconnected` | A tunnel came up / went down. |
 | `VPN/changed` | Full/split, IP or server changed. |
 
+### Services (source `services`)
+
+Each detail starts with `[<service name>]`. See [Windows services](../monitors/services.md#lines).
+
+| Kind | Meaning |
+|---|---|
+| `SERVICE/status` | State, display name, start type, PID, and the exe (and svchost `dll`) with `version`, `product_version`, `company` (`dll_…` for the DLL). At start and every `heartbeatMinutes`. |
+| `SERVICE/down` | Not in the expected state (`… (expected running) exit=…`); once, when it happens or at start. |
+| `SERVICE/up` | Back in the expected state. |
+| `SERVICE/changed` | State (`running -> stopped exit=1067`) or start type changed. |
+| `SERVICE/version_changed` | The program or its version changed. |
+| `SERVICE/error` | The service couldn't be queried (e.g. access denied). |
+
 ### Probes (source `probe`)
 
 | Kind | Meaning |

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-`exmon` is a Windows-only Go program that runs long-lived monitors ("sources") and writes their events to one rotating log file through an async queue. Sources: Wi-Fi (`wlanapi.dll`), network adapters, VPN detection and connectivity probes (iphlpapi/rasapi32), all through `golang.org/x/sys/windows`. There is no cgo.
+`exmon` is a Windows-only Go program that runs long-lived monitors ("sources") and writes their events to one rotating log file through an async queue. Sources: Wi-Fi (`wlanapi.dll`), network adapters, VPN detection, connectivity probes (iphlpapi/rasapi32) and Windows services (service manager + file version resources), all through `golang.org/x/sys/windows`. There is no cgo.
 
 It was ported from the C# WlanWatch in `reference/csharp/`; the NIC/VPN/probe detections come from the PowerShell script in `reference/Powershell/` (its Azure Log Analytics/credential parts were deliberately not ported). Leave `reference/` untouched. It runs in a console or as a Windows Service (`exmon.exe install`; LocalService with the `NT SERVICE\exmon` SID; see `docs/service.md`). The owner is new to Go, so explain Go-specific idioms when introducing them.
 
@@ -19,7 +19,7 @@ Whenever a change affects behaviour a user or developer would read about, update
 | If you change… | Update |
 |---|---|
 | a config setting, default, flag or allowed range | `docs/configuration.md` (incl. `#allowed-ranges`), `exmon.example.json` |
-| a monitor/source's behaviour | `docs/monitors/<name>.md` (wifi, nic, vpn, probes, path-trace) |
+| a monitor/source's behaviour | `docs/monitors/<name>.md` (wifi, nic, vpn, services, probes, path-trace) |
 | a metric name, subject or direction | `docs/reference/metrics.md` and the **Metrics** list in this file |
 | a log kind or line/jsonl format | `docs/reference/log-format.md` |
 | files written, paths, retention | `docs/reference/files.md` |
@@ -57,7 +57,7 @@ Sources publish to a fan-out bus; every consumer gets its own copy of each event
 
 ```
  sources ──► event.Logger (bus.For(name)) ──► event.Bus ──┬─► eventlog.FileSink   text log (always on)
- (wifi, nic, vpn, probe)                                  ├─► incident.Engine     rolling window + triggers → incident-*.log.gz
+ (wifi, nic, vpn, services, probe)                        ├─► incident.Engine     rolling window + triggers → incident-*.log.gz
                                                           ├─► probe.Tracer        path traces on interval + on INCIDENT/triggered
                                                           ├─► remote.Queue × N    one per entry in `remotes`: spool → Sender chosen by `type`
                                                           ├─► eventlog.FileSink   baseline.jsonl (baseline mode only)
@@ -82,13 +82,14 @@ internal/source       Source interface: Name(), Run(ctx, log) — blocks until c
 internal/config       Options composes each package's Config; defaults < config file < flags. Config file: --config, else exmon.json next to the exe, else %ProgramData%\exmon\config\exmon.json (first found wins; logged at startup)
 internal/wlan         Win32 WLAN layer (unsafe allowed); returns plain Go values
 internal/winnet       Win32 network layer (unsafe allowed): adapters, counters, routes, ICMP ping with TTL, uncached DNS, RAS, interface notifications, processes
-internal/winsys       Win32 security/session layer (unsafe allowed): ApplyDACL, AdminOnlyWritable (owner + DACL walk; read-only OWNER RIGHTS neutralises the owner), ConsoleUser (WTS), IsElevated
+internal/winsys       Win32 security/session layer (unsafe allowed): ApplyDACL, AdminOnlyWritable (owner + DACL walk; read-only OWNER RIGHTS neutralises the owner), ConsoleUser (WTS), IsElevated, QueryService (status/config/ServiceDll with query rights only), ReadFileVersion (version resource)
 internal/limits       Range/Count/First helpers for config upper bounds
-internal/safepath     Within (case-insensitive containment), CheckNoLinks (refuse junctions/symlinks below a root)
+internal/safepath     Within (case-insensitive containment), CheckNoLinks (refuse junctions/symlinks below a root), LocalDrive (local drive letter only; never stat a \\server path)
 internal/device       computer/user/domain/model/OS, logged as DEVICE at startup, in incident headers, `host` on remote records
 internal/wifi         Wi-Fi Source: notifications + poll ticker in one select loop; start/restart with backoff
 internal/nic          adapter up/down/changed (event-driven) + counters, NIC/status heartbeat
 internal/vpn          RAS VPNs, VPN adapters by pattern, client processes, full vs split tunnel, VPN/status heartbeat
+internal/services     services.watch list: state/start type (SERVICE/down|up|changed), exe or svchost ServiceDll version (SERVICE/version_changed), SERVICE/status heartbeat; winsys.QueryService (query rights only) + ReadFileVersion
 internal/probe        every intervalSeconds: DNS (uncached), gateway ping, endpoint TCP+ping, HTTP with httptrace phases; Tracer = path trace
 ```
 
@@ -97,6 +98,7 @@ internal/probe        every intervalSeconds: DNS (uncached), gateway ping, endpo
   - wifi [adapter]: `rssi_dbm`, `signal_quality`, `rx_kbps`, `tx_kbps`, per-poll `retry_pct`, `fcs_pct`, `handshake_fail`, `recent_disconnects` (window `wifi.disconnectWindowMinutes`, default 30; counts only disconnects seen since exmon started; the old name `disconnects_30m` is rejected at startup)
   - nic [adapter name]: `link_speed_mbps`, `rx_bps`, `tx_bps`, `in_errors`, `out_errors`, `in_discards`, `out_discards` (deltas per poll)
   - vpn [tunnel]: `vpn_up`, `vpn_server_rtt_ms`, `in_errors`, `out_errors`
+  - services [service name]: `running`, `as_expected`
   - probe [probe name; `gateway`; `dns:<name>`]: `dns_ms`, `gateway_rtt_ms`, `gateway_loss_pct`, `tcp_connect_ms`, `rtt_avg_ms`, `loss_pct`, `reachable`, `http_total_ms`, `http_ttfb_ms`, `http_tls_ms`, `http_ok`
 - **Severity**: each trigger has `severity` 1-5, **1 = most serious** (default 3). It appears as `sev=N` in INCIDENT/* details, `Event.Severity`, `-sevN-` in the incident id/file name and a `# severity:` header line. Retention is per severity (`maxIncidentsBySeverity`, falling back to `maxIncidents`; legacy files without `-sevN-` count as 3), so floods of low-severity incidents never delete Sev1 files. Remote selectors can add `severityAtLeast: N` (matches Sev1..N; events without a severity never match it).
 - **Incident holds**: `INCIDENT/triggered` carries `id=<file stem>`. Any component may publish `INCIDENT/hold id=X` / `INCIDENT/release id=X` to keep that capture open for late evidence (capped by `maxHoldSeconds`). The path tracer uses this so hops land in the incident file. Hold/release are never forwarded remotely.

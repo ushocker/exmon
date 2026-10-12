@@ -28,7 +28,7 @@ Triggers watch [metrics](reference/metrics.md), the numbers monitors report on e
 | Field | Required | Meaning |
 |---|---|---|
 | `name` | yes | Unique. Used in the file name. |
-| `source` | yes | The monitor: `wifi`, `nic`, `vpn` or `probe`. |
+| `source` | yes | The monitor: `wifi`, `nic`, `vpn`, `services` or `probe`. |
 | `metric` | yes | A metric name from [Metrics](reference/metrics.md). |
 | `op` | yes | `<`, `<=`, `>` or `>=`. |
 | `threshold` | yes | The number to compare with. |

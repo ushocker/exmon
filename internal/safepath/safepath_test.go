@@ -51,3 +51,26 @@ func TestCheckNoLinks(t *testing.T) {
 		t.Errorf("path through a junction: got %v, want refused", err)
 	}
 }
+
+func TestLocalDrive(t *testing.T) {
+	for p, want := range map[string]bool{
+		`C:\Windows\System32\svchost.exe`:                true,
+		`c:/windows/x.exe`:                               true,
+		`\\?\C:\Program Files\x\x.exe`:                   true,
+		`\\server\share\svc.exe`:                         false,
+		`//server/share/svc.exe`:                         false,
+		`\\?\UNC\server\share\svc.exe`:                   false,
+		`\\.\UNC\server\share\svc.exe`:                   false,
+		`\\?\GLOBALROOT\Device\Mup\server\share\svc.exe`: false,
+		`\\.\GLOBALROOT\Device\Mup\server\share\svc.exe`: false,
+		`\\.\C:\x.exe`:                                   false, // device form: not needed, refused
+		`UNC\server\share\svc.exe`:                       false,
+		`C:relative.exe`:                                 false,
+		`svc.exe`:                                        false,
+		``:                                               false,
+	} {
+		if got := LocalDrive(p); got != want {
+			t.Errorf("LocalDrive(%q) = %v, want %v", p, got, want)
+		}
+	}
+}

@@ -35,6 +35,16 @@
     ],
     "processNames": ["vpnui", "vpnagent", "PanGPA", "PanGPS", "ZSATunnel", "FortiClient", "dsNcService", "vpnc", "tailscaled"]
   },
+  "services": {
+    "enabled": true,
+    "pollSeconds": 30,
+    "heartbeatMinutes": 60,
+    "watch": [
+      { "name": "Dnscache" },
+      { "name": "MpsSvc" },
+      { "name": "wuauserv", "expect": "any" }
+    ]
+  },
   "probe": {
     "enabled": true,
     "intervalSeconds": 300,
@@ -74,7 +84,8 @@
       { "name": "endpoint-down",    "source": "probe", "metric": "reachable",          "op": "<",  "threshold": 1,                     "severity": 2 },
       { "name": "slow-http",        "source": "probe", "metric": "http_ttfb_ms",       "op": ">",  "threshold": 3000, "forSamples": 2, "severity": 4 },
       { "name": "nic-errors",       "source": "nic",   "metric": "in_errors",          "op": ">",  "threshold": 100,                   "severity": 3 },
-      { "name": "vpn-dropped",      "source": "vpn",   "metric": "vpn_up",             "op": "<",  "threshold": 1,                     "severity": 2 }
+      { "name": "vpn-dropped",      "source": "vpn",   "metric": "vpn_up",             "op": "<",  "threshold": 1,                     "severity": 2 },
+      { "name": "service-down",     "source": "services", "metric": "as_expected",    "op": "<",  "threshold": 1,    "forSamples": 2, "severity": 2 }
     ]
   },
   "remotes": [

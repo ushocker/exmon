@@ -67,11 +67,11 @@ The bus stamps the time when the event is published, not when it is written to d
 |---|---|
 | `main.go` | Chooses the mode: `install`/`uninstall`/`status` subcommands, service (started by the SCM) or console. Loads the config with the right trust check (`consoleTrust`: admin-only files when elevated or a service) and, for the service, runs `CheckOutputs`. Then `run(ctx, …)` wires consumers and sources and handles shutdown. Embeds `exmon.example.json` for `--write-default-config`. |
 | `internal/service` | Install/uninstall/status through the Service Control Manager, folder permissions, the config trust check, and the `svc.Handler` that reports start/running/stopping to Windows and writes to the Application event log. |
-| `internal/winsys` | Windows security and session wrapper: set folder permissions, check that a path is admin-only, find the console user, check elevation. A third `unsafe` package. |
+| `internal/winsys` | Windows security and session wrapper: set folder permissions, check that a path is admin-only, find the console user, check elevation; query a service's state and configuration with query-only rights (`QueryService`), read a file's version resource (`ReadFileVersion`). A third `unsafe` package. |
 | `internal/config` | `Options` composes each package's `Config`. Load order: defaults, then config file, then flags. Finds the config file (`LoadWith` takes a trust check), validates everything, and `CheckOutputs` keeps the service's outputs inside allowed folders. |
 | `internal/power` | The hold gate's driver: Windows suspend/resume notifications (`winsys.WatchPower`), clock-jump detection, the readiness check (default route + connection test), `Shutdown` on stop. |
 | `internal/limits` | `Range`, `Count` and `First`: the upper/lower bounds every section's `Validate()` uses. |
-| `internal/safepath` | `Within` (is a path inside a folder) and `CheckNoLinks` (no junctions or symbolic links below a folder). |
+| `internal/safepath` | `Within` (is a path inside a folder), `CheckNoLinks` (no junctions or symbolic links below a folder) and `LocalDrive` (a path on a local drive letter, so opening it never connects to another computer). |
 | `internal/event` | `Event`, `Logger`, `Bus`. |
 | `internal/eventlog` | `FileSink`: one goroutine owns the file (buffered writes, periodic flush, rotation, console echo). Text or JSONL. |
 | `internal/window` | The rolling window (single owner, no locking). |
@@ -86,6 +86,7 @@ The bus stamps the time when the event is published, not when it is written to d
 | `internal/wifi` | Wi-Fi source: notifications and polling in one `select` loop; change detection; frame stats; reconnect with backoff. |
 | `internal/nic` | Adapter source: change notifications + counter polling. |
 | `internal/vpn` | VPN source: RAS, adapter patterns, processes, routes. |
+| `internal/services` | Services source: state, start type and exe/ServiceDll version of each service in `services.watch`, via `winsys.QueryService` and `winsys.ReadFileVersion`. |
 | `internal/probe` | Probe source (DNS, gateway, endpoints, HTTP) and `Tracer` (path trace consumer). |
 | `internal/device` | Machine description for the DEVICE line, incident headers and remote `host`. |
 | `internal/wlan` | Windows WLAN API wrapper. One of only two packages allowed to use `unsafe`. |

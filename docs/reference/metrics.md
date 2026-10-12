@@ -41,6 +41,15 @@ Source `vpn`, subject = tunnel name. Reported every `vpn.pollSeconds` for each d
 | `vpn_server_rtt_ms` | ↑ | ms | Ping to a built-in VPN's server, when it answers. |
 | `in_errors`, `out_errors` | ↑ | count | Tunnel adapter errors since the previous check. |
 
+## Services
+
+Source `services`, subject = the service name from `services.watch`. Reported every `services.pollSeconds` for each watched service.
+
+| Metric | Bad | Unit | Meaning |
+|---|---|---|---|
+| `running` | ↓ | 0/1 | The service is running. |
+| `as_expected` | ↓ | 0/1 | The service is in its `expect` state (`running` by default; always 1 for `expect: any`). A trigger on `as_expected < 1` catches any watched service that stops or disappears. |
+
 ## Probes
 
 Source `probe`. Reported every `probe.intervalSeconds`.

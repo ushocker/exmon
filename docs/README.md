@@ -1,6 +1,6 @@
 # exmon documentation
 
-`exmon` is a Windows network monitor. It runs continuously, watches Wi-Fi, network adapters, VPN tunnels and connectivity to the services you care about, and writes everything to one rotating log file. When something crosses a threshold you set, it saves a compressed **incident** file containing the minutes before and after the problem, and it can forward selected events to a remote target through a queue that survives reboots.
+`exmon` is a Windows network monitor. It runs continuously, watches Wi-Fi, network adapters, VPN tunnels, the Windows services you list and connectivity to the services you care about, and writes everything to one rotating log file. When something crosses a threshold you set, it saves a compressed **incident** file containing the minutes before and after the problem, and it can forward selected events to a remote target through a queue that survives reboots.
 
 It is a single Windows executable written in Go, with no runtime dependencies. Run it in a console, or install it as a Windows Service with `exmon.exe install`.
 
@@ -11,6 +11,7 @@ It is a single Windows executable written in Go, with no runtime dependencies. R
 | Wi-Fi | Connection, signal (RSSI), channel, PHY, rates, security, roaming and disconnect events from the Windows WLAN service, frame statistics | [Wi-Fi monitor](monitors/wifi.md) |
 | Network adapters | Adapters going up/down, IP/gateway/DNS/speed changes, throughput, errors and discards | [Network adapters](monitors/nic.md) |
 | VPN | Built-in Windows VPNs, third-party VPN adapters and client processes, full vs split tunnel | [VPN detection](monitors/vpn.md) |
+| Windows services | A list of services: running or not, start type, and the version of the exe (or svchost DLL) each runs; down/up and version changes | [Windows services](monitors/services.md) |
 | Connectivity probes | DNS lookup time, gateway ping, TCP + ping to endpoints, timed HTTP requests | [Connectivity probes](monitors/probes.md) |
 | Path trace | Traceroute with per-hop latency and loss, on a timer and whenever an incident fires | [Path trace](monitors/path-trace.md) |
 | Incidents | Threshold triggers with severities; each incident saved as a `.log.gz` holding the rolling window plus what happened after | [Incidents](incidents.md) |

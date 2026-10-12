@@ -70,7 +70,7 @@ This is the selection in the starter config (`--write-default-config`). It sends
 
 | Field | Meaning |
 |---|---|
-| `source` | Only events from this monitor (`wifi`, `nic`, `vpn`, `probe`, `incident`, `pathtrace`, `exmon`). Leave out for any. |
+| `source` | Only events from this monitor (`wifi`, `nic`, `vpn`, `services`, `probe`, `incident`, `pathtrace`, `exmon`). Leave out for any. |
 | `kinds` | Event kinds; `*` matches anything within one part, so `ACM/*` matches every `ACM/...` kind. Leave out for any. |
 | `severityAtLeast` | Only events with a severity of this or more serious. See below. |
 

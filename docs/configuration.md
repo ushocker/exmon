@@ -38,6 +38,7 @@ Flags can be written with one or two dashes (`-config` or `--config`). An on/off
 | `--nic-enabled` | `nic.enabled` |
 | `--power-enabled` | `power.enabled` |
 | `--vpn-enabled` | `vpn.enabled` |
+| `--services-enabled`, `--services-poll-seconds` | `services.enabled`, `services.pollSeconds` |
 | `--probe-enabled`, `--probe-interval-seconds`, `--probe-path-trace-minutes` | `probe.*` |
 | `--incident-enabled`, `--incident-dir`, `--incident-window-minutes`, `--incident-post-seconds` | `incident.*` |
 | `--remotes-enabled=false` | turns every remote in `remotes` off |
@@ -96,6 +97,17 @@ See [VPN detection](monitors/vpn.md).
 | `pingCount` | `3` | Pings to a built-in VPN's server on each check. |
 | `adapterPatterns` | Cisco AnyConnect, GlobalProtect, PANGP, Palo Alto, Zscaler, Fortinet, FortiClient, WireGuard, OpenVPN, TAP-Windows, SonicWall, Pulse Secure, Juniper, Check Point, Tailscale | Adapter name/description fragments that mark a third-party VPN adapter. |
 | `processNames` | vpnui, vpnagent, PanGPA, PanGPS, ZSATunnel, FortiClient, dsNcService, vpnc, tailscaled | VPN client processes to report (without `.exe`). |
+
+## `services`: Windows services
+
+See [Windows services](monitors/services.md).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Runs only when `watch` lists something. |
+| `pollSeconds` | `30` | How often each service is checked. |
+| `heartbeatMinutes` | `60` | `SERVICE/status` for every service at start and then this often. 0 = only at start. |
+| `watch` | none | The services: `{ "name": "Spooler", "expect": "running" }`. `expect` is `running` (default), `stopped` or `any`. |
 
 ## `probe`: connectivity probes and path trace
 
@@ -205,6 +217,9 @@ Every number with a resource cost has a range, so a typo can't make exmon exhaus
 | `wifi.pollSeconds` | 1–3600 |
 | `nic.pollSeconds`, `vpn.pollSeconds` | 5–3600 |
 | `vpn.pingCount`, `probe.pingCount` | 1–10 |
+| `services.pollSeconds` | 5–3600 |
+| `services.heartbeatMinutes` | 0–1440 |
+| `services.watch` | at most 50 entries |
 | `probe.intervalSeconds` | 10–86400 |
 | `probe.timeoutSeconds` | 1–60 |
 | `probe.pathTrace.maxHops` | 1–64 |
