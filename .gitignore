@@ -4,3 +4,17 @@ baseline-summary.txt
 *.exe
 /reference/
 /exmon.json
+
+# Builds and local test runs.
+/dist/
+/*.log
+
+# Files left in a shared checkout by the fleet-control-plane branch: admin
+# certificates and keys, throwaway cloud configs, exmonctl profiles.
+/*.pem
+/*.csr
+/*.cer
+/*.pfx
+/cloud-*.json
+/exmonctl*.json
+/internal/signdoc/
