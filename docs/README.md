@@ -14,7 +14,7 @@ It is a single Windows executable written in Go, with no runtime dependencies. R
 | Connectivity probes | DNS lookup time, gateway ping, TCP + ping to endpoints, timed HTTP requests | [Connectivity probes](monitors/probes.md) |
 | Path trace | Traceroute with per-hop latency and loss, on a timer and whenever an incident fires | [Path trace](monitors/path-trace.md) |
 | Incidents | Threshold triggers with severities; each incident saved as a `.log.gz` holding the rolling window plus what happened after | [Incidents](incidents.md) |
-| Remote queue | Selected events forwarded to a remote target through an on-disk spool with retries and backoff | [Remote queue](remote.md) |
+| Remote queue | Selected events forwarded to one or more remotes (a local file or Azure Monitor, each with its own selectors and on-disk spool) with retries and backoff | [Remote queue](remote.md) |
 | Baseline mode | Records every measurement and suggests trigger thresholds from what is normal on this machine | [Baseline mode](baseline.md) |
 | Startup, sleep and shutdown | Holds events while starting, waking or shutting down until the network passes a connection test, so reconnecting isn't reported as a problem | [Startup, sleep and shutdown](power.md) |
 | Windows Service | Runs at startup as a low-privilege service with locked-down folders; install, upgrade and uninstall from the exe | [Running as a Windows Service](service.md) |
@@ -31,6 +31,7 @@ It is a single Windows executable written in Go, with no runtime dependencies. R
 - [Log format and event kinds](reference/log-format.md): what each log line means.
 - [Metrics](reference/metrics.md): every metric that triggers and the baseline can use.
 - [Files exmon writes](reference/files.md): where everything goes on disk.
+- [Sending events to Azure Monitor](azure-monitor.md): the `azureMonitor` remote, the Azure resources it needs and the write-only app.
 - [Data usage](data-usage.md): how much the remote queue would send per machine and per fleet (1,000 / 3,000 / 5,000 machines), with and without incidents.
 - [Troubleshooting](troubleshooting.md): known driver quirks and common questions.
 

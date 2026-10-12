@@ -83,13 +83,14 @@ See [Wi-Fi monitor](../monitors/wifi.md).
 
 ### Remote queue (source `remote`)
 
-These are never forwarded remotely.
+These are never forwarded remotely. Each detail starts with `remote=<name>`, the remote it is about.
 
 | Kind | Meaning |
 |---|---|
 | `REMOTE/resuming` | Sending events left from a previous run. |
 | `REMOTE/send_failed` | A send failed. Shows the attempt number and next retry. |
 | `REMOTE/recovered` | Sending works again. |
+| `REMOTE/dropped` | The target permanently rejected a batch (`count=N error=...`); it was dropped so later events can go through. |
 | `REMOTE/spool_overflow` | Old unsent events were dropped because the spool was full. |
 | `REMOTE/spool_error` | The spool couldn't be read or written. |
 

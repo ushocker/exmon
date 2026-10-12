@@ -63,7 +63,7 @@ Files an administrator creates in the config folder pass the check automatically
 
 ## Logs and the event log
 
-- **Output files:** the exmon log, incidents, the baseline and the remote spool go to the usual places under `%ProgramData%\exmon` ([Files](reference/files.md)). Nothing is echoed to a console.
+- **Output files:** the exmon log, incidents, the baseline and the remote spools go to the usual places under `%ProgramData%\exmon` ([Files](reference/files.md)). Nothing is echoed to a console.
 - **Event log:** the Windows **Application** event log (source `exmon`) records:
   - service started, with the config file used;
   - service stopped;
@@ -85,7 +85,7 @@ The service runs as its own account. So that the `DEVICE` line and incident file
 
 ## Custom output locations
 
-The service only writes its outputs (log, incidents, baseline, remote spool and outbox) inside `%ProgramData%\exmon`, or inside folders you list in `outputRoots`. This keeps a mistaken path from making it rename, delete or write files anywhere else. To use another folder:
+The service only writes its outputs (log, incidents, baseline, remote spools and outbox files) inside `%ProgramData%\exmon`, or inside folders you list in `outputRoots`. This keeps a mistaken path from making it rename, delete or write files anywhere else. To use another folder:
 
 1. List it in the config:
 

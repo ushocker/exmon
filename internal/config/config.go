@@ -20,6 +20,7 @@ import (
 	"exmon/internal/power"
 	"exmon/internal/probe"
 	"exmon/internal/remote"
+	"exmon/internal/remote/senders"
 	"exmon/internal/safepath"
 	"exmon/internal/vpn"
 	"exmon/internal/wifi"
@@ -32,7 +33,7 @@ type Options struct {
 	Log      eventlog.Config `json:"log"`
 	WiFi     wifi.Config     `json:"wifi"`
 	Incident incident.Config `json:"incident"`
-	Remote   remote.Config   `json:"remote"`
+	Remotes  remote.Remotes  `json:"remotes"`
 	Baseline baseline.Config `json:"baseline"`
 	NIC      nic.Config      `json:"nic"`
 	VPN      vpn.Config      `json:"vpn"`
@@ -55,7 +56,7 @@ func Defaults() Options {
 		Log:      eventlog.DefaultConfig(),
 		WiFi:     wifi.DefaultConfig(),
 		Incident: incident.DefaultConfig(),
-		Remote:   remote.DefaultConfig(),
+		Remotes:  remote.DefaultRemotes(),
 		Baseline: baseline.DefaultConfig(),
 		NIC:      nic.DefaultConfig(),
 		VPN:      vpn.DefaultConfig(),
@@ -83,6 +84,7 @@ type TrustFunc func(path string) error
 //   - An untrusted machine-wide config is an error: running a config someone may
 //     have tampered with is worse than not starting.
 func LoadWith(args []string, trust TrustFunc) (Options, error) {
+	senders.RegisterAll() // remote target types must be known before "remotes" is validated
 	opts := Defaults()
 
 	// The flags write into a separate copy. Only flags the user actually typed are
@@ -114,11 +116,9 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 	flags.IntVar(&ff.Incident.WindowMinutes, "incident-window-minutes", ff.Incident.WindowMinutes, "minutes of history kept for incidents")
 	flags.IntVar(&ff.Incident.PostTriggerSeconds, "incident-post-seconds", ff.Incident.PostTriggerSeconds, "seconds to keep recording after a trigger")
 
-	flags.BoolVar(&ff.Remote.Enabled, "remote-enabled", ff.Remote.Enabled, "forward selected events to the remote target")
-	flags.StringVar(&ff.Remote.Outbox, "remote-outbox", ff.Remote.Outbox, "stand-in remote: file that receives sent events")
-	flags.StringVar(&ff.Remote.SpoolDir, "remote-spool-dir", ff.Remote.SpoolDir, "on-disk queue for events waiting to be sent")
-	flags.IntVar(&ff.Remote.RetryMaxMinutes, "remote-retry-max-minutes", ff.Remote.RetryMaxMinutes, "longest wait between send retries")
-	flags.BoolVar(&ff.Remote.SimulateOffline, "remote-simulate-offline", ff.Remote.SimulateOffline, "testing: make every send fail")
+	// These two apply to every remote in the "remotes" list.
+	remotesEnabled := flags.Bool("remotes-enabled", true, "forward events to the configured remotes; false turns every remote off")
+	remotesOffline := flags.Bool("remote-simulate-offline", false, "testing: make every remote's sends fail")
 
 	flags.BoolVar(&ff.Baseline.Enabled, "baseline", ff.Baseline.Enabled, "learning mode: record every event and metric to the baseline file")
 	flags.StringVar(&ff.Baseline.Path, "baseline-path", ff.Baseline.Path, "baseline .jsonl file")
@@ -191,11 +191,17 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 		"incident-dir":             func() { opts.Incident.Dir = ff.Incident.Dir },
 		"incident-window-minutes":  func() { opts.Incident.WindowMinutes = ff.Incident.WindowMinutes },
 		"incident-post-seconds":    func() { opts.Incident.PostTriggerSeconds = ff.Incident.PostTriggerSeconds },
-		"remote-enabled":           func() { opts.Remote.Enabled = ff.Remote.Enabled },
-		"remote-outbox":            func() { opts.Remote.Outbox = ff.Remote.Outbox },
-		"remote-spool-dir":         func() { opts.Remote.SpoolDir = ff.Remote.SpoolDir },
-		"remote-retry-max-minutes": func() { opts.Remote.RetryMaxMinutes = ff.Remote.RetryMaxMinutes },
-		"remote-simulate-offline":  func() { opts.Remote.SimulateOffline = ff.Remote.SimulateOffline },
+		"remotes-enabled": func() {
+			for i := range opts.Remotes {
+				on := *remotesEnabled // a new variable each time, so each remote gets its own pointer
+				opts.Remotes[i].Enabled = &on
+			}
+		},
+		"remote-simulate-offline": func() {
+			for i := range opts.Remotes {
+				opts.Remotes[i].SimulateOffline = *remotesOffline
+			}
+		},
 		"baseline":                 func() { opts.Baseline.Enabled = ff.Baseline.Enabled },
 		"baseline-path":            func() { opts.Baseline.Path = ff.Baseline.Path },
 		"baseline-summary-minutes": func() { opts.Baseline.SummaryMinutes = ff.Baseline.SummaryMinutes },
@@ -212,8 +218,16 @@ func LoadWith(args []string, trust TrustFunc) (Options, error) {
 		}
 	})
 
+	// Fill in each remote's unset settings (list items can't inherit defaults).
+	for i := range opts.Remotes {
+		opts.Remotes[i].ApplyDefaults()
+	}
+
 	// Expand %VAR% in every path. A slice of pointers lets one loop update them all.
-	paths := []*string{&opts.Log.Path, &opts.Incident.Dir, &opts.Remote.Outbox, &opts.Remote.SpoolDir, &opts.Baseline.Path}
+	paths := []*string{&opts.Log.Path, &opts.Incident.Dir, &opts.Baseline.Path}
+	for i := range opts.Remotes {
+		paths = append(paths, &opts.Remotes[i].SpoolDir)
+	}
 	for i := range opts.OutputRoots {
 		paths = append(paths, &opts.OutputRoots[i])
 	}
@@ -237,8 +251,17 @@ func (o Options) outputs() []output {
 	if o.Incident.Enabled {
 		out = append(out, output{"incident.dir", o.Incident.Dir})
 	}
-	if o.Remote.Enabled {
-		out = append(out, output{"remote.spoolDir", o.Remote.SpoolDir}, output{"remote.outbox", o.Remote.Outbox})
+	for _, r := range o.Remotes {
+		if !r.IsEnabled() {
+			continue
+		}
+		paths, err := r.Outputs()
+		if err != nil {
+			continue // Validate reports bad settings
+		}
+		for _, p := range paths {
+			out = append(out, output{"remotes[" + r.Name + "]", p})
+		}
 	}
 	if o.Baseline.Enabled {
 		out = append(out, output{"baseline.path", o.Baseline.Path})
@@ -286,7 +309,7 @@ func (o Options) Validate() error {
 	}
 	// errors.Join combines several errors into one (nil ones are ignored).
 	return errors.Join(o.Log.Validate(), o.WiFi.Validate(), o.NIC.Validate(), o.VPN.Validate(),
-		o.Probe.Validate(), o.Power.Validate(), o.Incident.Validate(), o.Remote.Validate(), o.Baseline.Validate())
+		o.Probe.Validate(), o.Power.Validate(), o.Incident.Validate(), o.Remotes.Validate(), o.Baseline.Validate())
 }
 
 // DefaultConfigPath is the machine-wide config location (%VAR% not yet expanded).
@@ -368,6 +391,21 @@ func loadFile(path string, opts *Options) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
+	}
+	// First look at the top-level keys only. json.RawMessage keeps each value as
+	// undecoded bytes, which is all we need to see which keys are present.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	// The old single "remote" section would otherwise be silently ignored.
+	if _, old := top["remote"]; old {
+		return fmt.Errorf(`%s: "remote" was replaced by "remotes", a list of remotes each with a name and type; see docs/remote.md#migrating-from-remote`, path)
+	}
+	// A "remotes" list in the file replaces the default list rather than merging
+	// item by item with it.
+	if _, ok := top["remotes"]; ok {
+		opts.Remotes = nil
 	}
 	if err := json.Unmarshal(b, opts); err != nil {
 		return fmt.Errorf("%s: %w", path, err)

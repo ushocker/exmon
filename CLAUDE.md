@@ -10,6 +10,8 @@ It was ported from the C# WlanWatch in `reference/csharp/`; the NIC/VPN/probe de
 
 User and developer documentation lives in `docs/` (start at `docs/README.md`).
 
+Selected events are forwarded to `remotes`: a local outbox file, or Azure Monitor's Logs Ingestion API (`azureMonitor`: Entra client-credentials app with a write-only role on one DCR; `docs/azure-monitor.md`). This `demo` branch is master plus features ported from the `fleet-control-plane` branch; the control plane, updater, exmon-helper, exmonctl and `deploy/` live only there.
+
 ## Keeping docs in sync (required)
 
 Whenever a change affects behaviour a user or developer would read about, update the docs **in the same change**, before reporting the task as done. Don't wait to be asked. A change isn't finished until the docs match the code.
@@ -22,7 +24,7 @@ Whenever a change affects behaviour a user or developer would read about, update
 | a log kind or line/jsonl format | `docs/reference/log-format.md` |
 | files written, paths, retention | `docs/reference/files.md` |
 | incident triggers, severity, holds | `docs/incidents.md` |
-| remote queue/spool/delivery | `docs/remote.md` |
+| remote queue/spool/delivery, remote target types | `docs/remote.md` (and `docs/azure-monitor.md` for the `azureMonitor` type) |
 | baseline mode | `docs/baseline.md` |
 | service install/permissions/trust | `docs/service.md` |
 | package layout, bus, consumers | `docs/architecture.md` and the **Architecture** section in this file |
@@ -37,9 +39,10 @@ Pure refactors, test-only changes and internal renames with no visible effect ne
 go build ./...      # build (must target windows; GOOS=windows if cross-compiling)
 go vet ./...
 go test ./...
+go build -ldflags "-X exmon/internal/version.Version=1.0.0" -o dist/exmon.exe .   # versioned build (ExmonVersion in Azure Monitor rows; a wrong -X path is silently ignored → "dev")
 go run . --wifi-poll-seconds 2 --wifi-debug-poll --log-path .\test.log   # run; Ctrl+C to stop
 go run . --baseline --baseline-path .\baseline.jsonl   # learning mode: record all metrics + summary
-go run . --remote-simulate-offline                     # test remote retries/redelivery without a network
+go run . --remote-simulate-offline                     # test remote retries/redelivery without a network (all remotes)
 go run . --probe-interval-seconds 30                   # faster probe rounds while testing (default 300)
 go run . --write-default-config                        # write exmon.example.json (embedded in the exe) to %ProgramData%\exmon\config\exmon.json
 go run . -h         # list flags
@@ -56,7 +59,7 @@ Sources publish to a fan-out bus; every consumer gets its own copy of each event
  sources ──► event.Logger (bus.For(name)) ──► event.Bus ──┬─► eventlog.FileSink   text log (always on)
  (wifi, nic, vpn, probe)                                  ├─► incident.Engine     rolling window + triggers → incident-*.log.gz
                                                           ├─► probe.Tracer        path traces on interval + on INCIDENT/triggered
-                                                          ├─► remote.Queue        on-disk spool → Sender (outbox stand-in; real target TODO)
+                                                          ├─► remote.Queue × N    one per entry in `remotes`: spool → Sender chosen by `type`
                                                           ├─► eventlog.FileSink   baseline.jsonl (baseline mode only)
                                                           └─► baseline.Summarizer baseline-summary.txt (baseline mode only)
 ```
@@ -69,7 +72,11 @@ internal/power        hold gate driver: suspend/resume (winsys.WatchPower), cloc
 internal/eventlog     FileSink: one writer goroutine owns the file (bufio, flush ticker, rotation, echo); text or jsonl
 internal/window       rolling window of events (single owner, no mutex)
 internal/incident     trigger Rules on METRICS events; captures window + post-trigger lines; gzip writer; INCIDENT/* events
-internal/remote       Spool (segment files + cursor.json, fsync), Backoff, Queue (appender + sender goroutines), Sender
+internal/remote       per-remote Config + Remotes list, Spool (segment files + cursor.json, fsync), Backoff, Queue (appender + sender goroutines), Sender, Permanent errors, SenderType registry (outbox built in; DecodeSettings = strict, no trailing data)
+internal/remote/azuremonitor  "azureMonitor" target: Logs Ingestion API (gzip, <1 MB chunks, 401/413/429/403/400 handling); registered in internal/remote/senders
+internal/secret       Secret string type that prints as [redacted] (fmt, %#v, JSON); Reveal() is the only accessor
+internal/entra        client-credentials token source (cached, errors carry status + AADSTS code only); RefuseRedirects for the Azure clients
+internal/version      Version, set with -ldflags "-X exmon/internal/version.Version=1.0.0" (default "dev")
 internal/baseline     baseline config + Summarizer (reservoir percentiles, suggested triggers)
 internal/source       Source interface: Name(), Run(ctx, log) — blocks until ctx is cancelled
 internal/config       Options composes each package's Config; defaults < config file < flags. Config file: --config, else exmon.json next to the exe, else %ProgramData%\exmon\config\exmon.json (first found wins; logged at startup)
@@ -95,7 +102,8 @@ internal/probe        every intervalSeconds: DNS (uncached), gateway ping, endpo
 - **Incident holds**: `INCIDENT/triggered` carries `id=<file stem>`. Any component may publish `INCIDENT/hold id=X` / `INCIDENT/release id=X` to keep that capture open for late evidence (capped by `maxHoldSeconds`). The path tracer uses this so hops land in the incident file. Hold/release are never forwarded remotely.
 - **Held events**: while `internal/power` holds the gate (startup, sleep/wake, shutdown until the network is ready), events from `bus.For` loggers carry `Held`. They are logged with `[held]` but don't trigger, aren't forwarded and are excluded from baseline stats. exmon/power lines use `bus.ForUnheld`. Any new consumer that alarms or forwards must skip `Held`; fake `event.Logger`s in tests need a `Held() bool` method. The service accepts pre-shutdown; the console treats SIGTERM (Windows shutdown/log-off) like Ctrl+C.
 - **Bus rule**: a consumer must never call `Publish` from the goroutine that reads its own subscription (deadlock when its channel is full). Use `PublishAsync` there, or publish from another goroutine.
-- **Remote**: delivery is at-least-once; each `Record` has a random `id` for de-duplication and the computer name as `host`. Spool survives restarts; `REMOTE/*` events are local-only. `--remote-simulate-offline` makes sends fail for testing.
+- **Remote**: `remotes` is a list (max 8); each remote has a `name`, a `type` (sender from the registry in `internal/remote/registry.go`), raw-JSON `settings` decoded strictly by that type, its own selectors, spool (`remote-spool\<name>`) and bus subscription (`remote:<name>`). List items don't inherit defaults from JSON, so `Config.ApplyDefaults` fills them; `Enabled` is `*bool` (nil = on). The old `remote` key is rejected in `loadFile`. Delivery is at-least-once; each `Record` has a random `id` for de-duplication and the computer name as `host`. `remote.Permanent(err)` drops a batch instead of retrying; `REMOTE/*` lines start with `remote=<name>` and are local-only. `--remote-simulate-offline` makes every remote's sends fail.
+- **Azure Monitor secret**: on this branch `%ProgramData%\exmon\config` is readable by Users (master's folder permissions), so the `clientSecret` in `exmon.json` is readable by any local user. Accepted for the demo (the app can only write to one DCR); `fleet-control-plane` makes the folder admin-only.
 
 - **wlan**: `types.go` struct mirrors must match the SDK layouts exactly; `wlan_test.go` checks sizes/offsets. Variable-length C arrays use a `[1]` placeholder read with `unsafe.Slice`. The notification callback (`notify.go`, created once with `windows.NewCallback`) copies the payload and does a non-blocking send; drops are counted.
 - **wifi**: POLL lines are written only on change (signature, RSSI ≥ threshold, rx/tx swing ≥ %, retry/FCS % move, handshake failure). Baselines and STATS deltas are relative to the last *logged* sample.

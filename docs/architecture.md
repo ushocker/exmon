@@ -12,7 +12,7 @@ This page is for anyone changing exmon's code. The code is plain Go with no cgo;
  wifi   ─┐                              ┌─► eventlog.FileSink    text log (always on)
  nic    ─┤   event.Logger               ├─► incident.Engine      rolling window + triggers → incident-*.log.gz
  vpn    ─┼── (bus.For(name)) ──► Bus ───┼─► probe.Tracer         path traces (interval + on incident)
- probe  ─┘                              ├─► remote.Queue         on-disk spool → Sender
+ probe  ─┘                              ├─► remote.Queue × N     one per remote: spool → Sender (by type)
                                         ├─► eventlog.FileSink    baseline.jsonl        (baseline mode)
                                         └─► baseline.Summarizer  baseline-summary.txt  (baseline mode)
 ```
@@ -76,7 +76,11 @@ The bus stamps the time when the event is published, not when it is written to d
 | `internal/eventlog` | `FileSink`: one goroutine owns the file (buffered writes, periodic flush, rotation, console echo). Text or JSONL. |
 | `internal/window` | The rolling window (single owner, no locking). |
 | `internal/incident` | Trigger rules, captures, hold/release, gzip writer, per-severity retention. |
-| `internal/remote` | `Spool` (segment files + cursor), `Backoff`, `Queue` (appender + sender goroutines), `Sender` interface and the stand-in `OutboxSender`. |
+| `internal/remote` | Per-remote `Config` and the `Remotes` list, `Spool` (segment files + cursor), `Backoff`, `Queue` (appender + sender goroutines), the `Sender` interface, `Permanent` errors, and the registry of target types (`outbox` is built in). |
+| `internal/remote/azuremonitor` | The `azureMonitor` target type: Logs Ingestion API sender. Registered in `internal/remote/senders`. |
+| `internal/secret` | `Secret`, a string that prints as `[redacted]` everywhere; `Reveal()` is the only way to read it. |
+| `internal/entra` | Entra ID client-credentials tokens, cached until shortly before they expire. Also `RefuseRedirects`, the redirect policy of the Azure Monitor and Entra client. |
+| `internal/version` | The build's version, set with `-ldflags "-X exmon/internal/version.Version=…"` (default `dev`). The linker silently ignores a mistyped path. |
 | `internal/baseline` | Baseline config and the `Summarizer` (reservoir-sampled percentiles, suggestions). |
 | `internal/source` | The `Source` interface: `Name()`, `Run(ctx, log)`. |
 | `internal/wifi` | Wi-Fi source: notifications and polling in one `select` loop; change detection; frame stats; reconnect with backoff. |
@@ -107,6 +111,18 @@ The bus stamps the time when the event is published, not when it is written to d
 ## Adding a consumer
 
 Subscribe in `main.go` before the sources start (`bus.Subscribe(name, busBuffer, event.Blocking)`), read until the channel closes, and append its `Wait` function to `stops` so shutdown waits for it. Follow the bus rule above if it publishes.
+
+## Adding a remote target type
+
+A remote's `type` picks a `remote.SenderType` from a registry (`internal/remote/registry.go`). To add one, for example a new SIEM:
+
+1. Create `internal/remote/<name>` with a settings struct, decoded with `remote.DecodeSettings` (unknown keys and trailing data are errors).
+2. Implement `remote.Sender`: `Send(ctx, []Record) error`. Return an ordinary error for "try again later". Wrap it with `remote.Permanent` when retrying can never help (the target rejects the data), so the queue drops that batch instead of blocking. An error with a `RetryAfter() time.Duration` method makes the queue wait at least that long.
+3. Fill in a `remote.SenderType`: `Validate`, `New`, `Describe` (a secret-free summary for the startup log), and `Outputs` if it writes local files.
+4. Register it with `remote.Register("<name>", ...)` in `internal/remote/senders`, which `config` calls before anything is validated.
+5. Document it in the [target types](remote.md#target-types) table, `docs/configuration.md` and `exmon.example.json`.
+
+The queue, spool, retries, selectors and multiple remotes work with it unchanged.
 
 ## Adding evidence to incidents
 

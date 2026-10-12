@@ -153,7 +153,9 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 	bus := event.NewBus()
 	dev := device.Get(asService)
 	opts.Incident.Device = func() string { return dev.Refresh(asService).String() }
-	opts.Remote.Host = dev.Computer
+	for i := range opts.Remotes {
+		opts.Remotes[i].Host = dev.Computer
+	}
 
 	// Consumers subscribe before anything is published. Each adds a "wait" function
 	// to stops; at shutdown they run in reverse order, so the log file goes last.
@@ -204,15 +206,19 @@ func run(ctx context.Context, opts config.Options, asService bool, ready func(),
 		stops = append(stops, tracer.Wait)
 	}
 
-	if opts.Remote.Enabled {
-		// TODO: replace OutboxSender with the real remote target (opts.Remote.Endpoint).
-		var sender remote.Sender = remote.OutboxSender{Path: opts.Remote.Outbox}
-		if opts.Remote.SimulateOffline {
-			sender = remote.FailingSender{}
+	// One queue per enabled remote, each with its own subscription and spool, so a
+	// slow or offline remote never holds up another.
+	for _, rc := range opts.Remotes {
+		if !rc.IsEnabled() {
+			continue
 		}
-		queue, err := remote.Start(opts.Remote, bus.Subscribe("remote", busBuffer, event.Blocking), sender, bus.For("remote"))
+		sender, err := remote.NewSender(rc, bus.For("remote"))
 		if err != nil {
-			return fail("remote", err)
+			return fail("remote "+rc.Name, err)
+		}
+		queue, err := remote.Start(rc, bus.Subscribe("remote:"+rc.Name, busBuffer, event.Blocking), sender, bus.For("remote"))
+		if err != nil {
+			return fail("remote "+rc.Name, err)
 		}
 		stops = append(stops, queue.Wait)
 	}
@@ -321,12 +327,17 @@ func describe(log event.Logger, o config.Options) {
 		log.Log("MONITOR", fmt.Sprintf("incidents: %d trigger(s), window %dm + %ds, saving to %s",
 			len(o.Incident.Triggers), o.Incident.WindowMinutes, o.Incident.PostTriggerSeconds, o.Incident.Dir))
 	}
-	if o.Remote.Enabled {
-		target := "outbox " + o.Remote.Outbox
-		if o.Remote.SimulateOffline {
-			target = "SIMULATED OFFLINE"
+	for _, r := range o.Remotes {
+		if !r.IsEnabled() {
+			continue
 		}
-		log.Log("MONITOR", fmt.Sprintf("remote: %s, spool %s, retry up to every %dm", target, o.Remote.SpoolDir, o.Remote.RetryMaxMinutes))
+		// Describe never prints secrets: each sender type decides what is safe to show.
+		target := r.Type + " " + remote.Describe(r)
+		if r.SimulateOffline {
+			target = r.Type + " SIMULATED OFFLINE"
+		}
+		log.Log("MONITOR", fmt.Sprintf("remote %s: %s, %d selector(s), spool %s, retry up to every %dm",
+			r.Name, target, len(r.Include), r.SpoolDir, r.RetryMaxMinutes))
 	}
 	if o.Baseline.Enabled {
 		log.Log("MONITOR", fmt.Sprintf("baseline: recording to %s, summary every %dm in %s",

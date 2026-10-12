@@ -32,10 +32,9 @@ func TestSeverityAtLeast(t *testing.T) {
 }
 
 func TestSeverityAtLeastValidation(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.SpoolDir = "x"
+	cfg := outboxRemote("sev", t.TempDir())
 	cfg.Include = []Selector{{SeverityAtLeast: 6}}
-	if cfg.Validate() == nil {
+	if (Remotes{cfg}).Validate() == nil {
 		t.Error("severityAtLeast 6 should fail")
 	}
 }

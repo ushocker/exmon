@@ -63,7 +63,7 @@ func Start(cfg Config, events <-chan event.Event, sender Sender, log event.Logge
 func (q *Queue) Wait() { <-q.done }
 
 // appender reads the bus subscription and writes wanted events to the spool.
-// It must not call q.log.Log directly (it is the reader of its own channel; see the
+// It must not call q.logf directly (it is the reader of its own channel; see the
 // rule on event.Bus), so it logs from a new goroutine instead.
 func (q *Queue) appender() {
 	defer close(q.appended)
@@ -84,10 +84,10 @@ func (q *Queue) appender() {
 
 		dropped, err := q.spool.Append(recs)
 		if err != nil {
-			go q.log.Log("REMOTE/spool_error", fmt.Sprintf("lost=%d error=%q", len(recs), err.Error()))
+			go q.logf("REMOTE/spool_error", "lost=%d error=%q", len(recs), err.Error())
 		}
 		if dropped > 0 {
-			go q.log.Log("REMOTE/spool_overflow", fmt.Sprintf("dropped=%d (maxSpoolMB=%d)", dropped, q.cfg.MaxSpoolMB))
+			go q.logf("REMOTE/spool_overflow", "dropped=%d (maxSpoolMB=%d)", dropped, q.cfg.MaxSpoolMB)
 		}
 		select { // non-blocking: if a wake is already pending, one is enough
 		case q.wake <- struct{}{}:
@@ -101,7 +101,7 @@ func (q *Queue) senderLoop(pending int) {
 	defer q.spool.Close()
 
 	if pending > 0 {
-		q.log.Log("REMOTE/resuming", fmt.Sprintf("pending=%d (from a previous run)", pending))
+		q.logf("REMOTE/resuming", "pending=%d (from a previous run)", pending)
 	}
 	backoff := Backoff{
 		Initial: time.Duration(q.cfg.RetryInitialSeconds) * time.Second,
@@ -114,7 +114,7 @@ func (q *Queue) senderLoop(pending int) {
 	for {
 		recs, next, err := q.spool.Peek(q.cfg.BatchSize)
 		if err != nil {
-			q.log.Log("REMOTE/spool_error", err.Error())
+			q.logf("REMOTE/spool_error", "%s", err.Error())
 		}
 		if len(recs) == 0 {
 			select {
@@ -129,10 +129,10 @@ func (q *Queue) senderLoop(pending int) {
 
 		if err = q.send(recs, sendTimeout); err == nil {
 			if cerr := q.spool.Commit(next); cerr != nil {
-				q.log.Log("REMOTE/spool_error", cerr.Error())
+				q.logf("REMOTE/spool_error", "%s", cerr.Error())
 			}
 			if attempt > 0 {
-				q.log.Log("REMOTE/recovered", fmt.Sprintf("delivered after %d failed attempts", attempt))
+				q.logf("REMOTE/recovered", "delivered after %d failed attempts", attempt)
 			}
 			backoff.Reset()
 			attempt = 0
@@ -143,10 +143,20 @@ func (q *Queue) senderLoop(pending int) {
 			continue
 		}
 
+		if IsPermanent(err) {
+			// Retrying can't help (the remote rejected the data itself), and keeping the
+			// batch would block everything behind it, so it is dropped.
+			q.logf("REMOTE/dropped", "count=%d error=%q", len(recs), err.Error())
+			if cerr := q.spool.Commit(next); cerr != nil {
+				q.logf("REMOTE/spool_error", "%s", cerr.Error())
+			}
+			continue
+		}
+
 		attempt++
-		delay := backoff.Next()
-		q.log.Log("REMOTE/send_failed", fmt.Sprintf("attempt=%d retry_in=%v error=%q",
-			attempt, delay.Round(time.Second), err.Error()))
+		delay := max(backoff.Next(), retryHint(err)) // never sooner than the remote asked
+		q.logf("REMOTE/send_failed", "attempt=%d retry_in=%v error=%q",
+			attempt, delay.Round(time.Second), err.Error())
 		// New events do not cut this wait short; only shutdown does.
 		select {
 		case <-q.appended:
@@ -155,6 +165,12 @@ func (q *Queue) senderLoop(pending int) {
 		case <-time.After(delay):
 		}
 	}
+}
+
+// logf writes a REMOTE/* line that starts with this remote's name, so lines from
+// different remotes can be told apart.
+func (q *Queue) logf(kind, format string, args ...any) {
+	q.log.Log(kind, "remote="+q.cfg.Name+" "+fmt.Sprintf(format, args...))
 }
 
 func (q *Queue) send(recs []Record, timeout time.Duration) error {

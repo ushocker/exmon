@@ -77,23 +77,47 @@
       { "name": "vpn-dropped",      "source": "vpn",   "metric": "vpn_up",             "op": "<",  "threshold": 1,                     "severity": 2 }
     ]
   },
-  "remote": {
-    "enabled": true,
-    "endpoint": "",
-    "outbox": "%ProgramData%\\exmon\\remote-outbox.jsonl",
-    "spoolDir": "%ProgramData%\\exmon\\remote-spool",
-    "segmentKB": 1024,
-    "maxSpoolMB": 100,
-    "batchSize": 50,
-    "flushIntervalMs": 5000,
-    "retryInitialSeconds": 5,
-    "retryMaxMinutes": 15,
-    "include": [
-      { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "ACM/scan_fail", "MSM/connected", "MSM/disconnected", "MSM/roaming_start", "MSM/roaming_end", "MSM/radio_state_change"] },
-      { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
-      { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] }
-    ]
-  },
+  "remotes": [
+    {
+      "name": "outbox",
+      "type": "outbox",
+      "enabled": true,
+      "settings": { "path": "%ProgramData%\\exmon\\remote-outbox.jsonl" },
+      "spoolDir": "%ProgramData%\\exmon\\remote-spool\\outbox",
+      "segmentKB": 1024,
+      "maxSpoolMB": 100,
+      "batchSize": 50,
+      "flushIntervalMs": 5000,
+      "retryInitialSeconds": 5,
+      "retryMaxMinutes": 15,
+      "include": [
+        { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "ACM/scan_fail", "MSM/connected", "MSM/disconnected", "MSM/roaming_start", "MSM/roaming_end", "MSM/radio_state_change"] },
+        { "kinds": ["INCIDENT/*"], "severityAtLeast": 3 },
+        { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] },
+        { "source": "services", "kinds": ["SERVICE/down", "SERVICE/up", "SERVICE/version_changed"] }
+      ]
+    },
+    {
+      "name": "law",
+      "type": "azureMonitor",
+      "enabled": false,
+      "settings": {
+        "endpoint": "https://exmon-prod-dcr-xxxx.eastus-1.ingest.monitor.azure.com",
+        "dcrImmutableId": "dcr-00000000000000000000000000000000",
+        "streamName": "Custom-ExmonEvents",
+        "tenantId": "00000000-0000-0000-0000-000000000000",
+        "clientId": "00000000-0000-0000-0000-000000000000",
+        "clientSecret": "REPLACE-WITH-THE-INGEST-APP-SECRET"
+      },
+      "batchSize": 200,
+      "include": [
+        { "source": "wifi", "kinds": ["ACM/connection_complete", "ACM/connection_attempt_fail", "ACM/disconnected", "MSM/disconnected", "MSM/roaming_end"] },
+        { "kinds": ["INCIDENT/*"] },
+        { "kinds": ["PROBE/down", "PROBE/up", "NIC/up", "NIC/down", "VPN/connected", "VPN/disconnected", "VPN/changed", "POWER/not_ready"] },
+        { "source": "services", "kinds": ["SERVICE/status", "SERVICE/down", "SERVICE/up", "SERVICE/changed", "SERVICE/version_changed", "SERVICE/error"] }
+      ]
+    }
+  ],
   "power": {
     "enabled": true,
     "testURL": "http://www.msftconnecttest.com/connecttest.txt",

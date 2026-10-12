@@ -95,11 +95,14 @@ Add a fragment of its adapter description to `vpn.adapterPatterns`, and its proc
 
 ## Nothing arrives at the remote target
 
-There is no real remote target yet: events go to `remote-outbox.jsonl`. Also check:
+Check:
 
-- `remote.include`: the default only forwards `INCIDENT/*`. Selectors with `severityAtLeast` only match incident events.
-- `REMOTE/send_failed` lines in the log.
-- Files in `remote-spool\`. That folder holding many segments means sending is failing.
+- The `MONITOR` lines at startup: there is one `remote <name>: ...` line per enabled remote. No line means it is disabled (or `--remotes-enabled=false` was used).
+- That remote's `include`: without a `remotes` key, the default remote only forwards `INCIDENT/*` to `remote-outbox.jsonl`. Selectors with `severityAtLeast` only match incident events.
+- `REMOTE/send_failed` and `REMOTE/dropped` lines for that remote (`remote=<name>`).
+- Files in `remote-spool\<name>\`. Many segments there means sending is failing.
+- An `azureMonitor` remote failing with `…: EOF`: the connection to the ingestion endpoint is closed during the TLS handshake. That's usually a network filter blocking the host name (`*.ingest.monitor.azure.com` is on many telemetry block lists), not Azure. Allow the host in the filter or proxy.
+- An `azureMonitor` remote failing with `HTTP 403`: the app's *Monitoring Metrics Publisher* role on the DCR is missing, or was added less than 30 minutes ago. See [Sending events to Azure Monitor](azure-monitor.md#when-sending-fails).
 
 ## Incident files disappear
 

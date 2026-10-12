@@ -166,10 +166,9 @@ func (f *fakeSender) count() int {
 }
 
 func testCfg(dir string) Config {
-	cfg := DefaultConfig()
-	cfg.SpoolDir = dir
-	cfg.FlushIntervalMs = 100
-	cfg.Include = []Selector{{Kinds: []string{"ACM/*"}}}
+	cfg := Config{Name: "test", Type: "outbox", SpoolDir: dir, FlushIntervalMs: 100,
+		Include: []Selector{{Kinds: []string{"ACM/*"}}}}
+	cfg.ApplyDefaults()
 	return cfg
 }
 

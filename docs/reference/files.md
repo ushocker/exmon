@@ -7,8 +7,8 @@ With the defaults, everything lives under `%ProgramData%\exmon\` (usually `C:\Pr
 | `config\exmon.json` | you, or `--write-default-config` | The machine-wide config. An `exmon.json` next to `exmon.exe` takes priority over it. |
 | `exmon.log`, `exmon.1.log` … | always | The main log ([format](log-format.md)). Rotates at `log.maxSizeMB`. |
 | `incidents\incident-<time>-sev<N>-<rule>.log.gz` | incidents | One compressed file per incident ([details](../incidents.md#the-incident-file)). Kept per severity. |
-| `remote-spool\00000001.jsonl` …, `cursor.json` | remote queue | Events waiting to be sent, and how far sending has got ([details](../remote.md#the-spool-on-disk)). Don't edit while running. |
-| `remote-outbox.jsonl` | remote queue (stand-in sender) | What would have been sent to the remote target, one JSON record per line. Grows without limit until the real sender exists. |
+| `remote-spool\<name>\00000001.jsonl` …, `cursor.json` | each remote | Events waiting to be sent to that remote, and how far sending has got ([details](../remote.md#the-spool-on-disk)). Don't edit while running. |
+| `remote-outbox.jsonl` | an `outbox` remote (the default one) | Sent events, one JSON record per line. Grows without limit; delete or rotate it yourself. |
 | `baseline.jsonl`, `baseline.1.jsonl` … | baseline mode | Every event and metric as JSON lines. |
 | `baseline-summary.txt` | baseline mode | Percentiles and suggested triggers. |
 
@@ -29,5 +29,5 @@ When running, exmon doesn't write anywhere else, and doesn't change Windows sett
 
 With exmon stopped, you can delete any of these.
 
-- Deleting `remote-spool\` loses any events still waiting to be sent.
+- Deleting `remote-spool\` (or one remote's folder in it) loses any events still waiting to be sent.
 - Deleting the config means exmon falls back to the next config location, or to the built-in defaults.

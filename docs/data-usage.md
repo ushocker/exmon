@@ -1,8 +1,8 @@
 # Data usage
 
-How much data the [remote queue](remote.md) would send per machine and across a fleet, depending on what `remote.include` selects. Use it to size SIEM ingestion and licensing before choosing selectors.
+How much data the [remote queue](remote.md) would send per machine and across a fleet, depending on what each remote's `include` selects. Use it to size SIEM ingestion and licensing before choosing selectors.
 
-These are **estimates**. There is no real remote target yet, so they are measured from the `remote-outbox.jsonl` stand-in and the baseline file, not from a live SIEM.
+These are **estimates**, measured from the `outbox` remote's file and the baseline file on one machine, not from a live SIEM. The [Azure Monitor](azure-monitor.md) remote sends the same events as flat table rows, so the volumes are similar.
 
 ## How the numbers were measured
 
@@ -55,6 +55,6 @@ The number of incidents depends almost entirely on your triggers and their `cool
 
 - **Selected events cost almost nothing; periodic kinds dominate.** The starter selectors and incidents stay in the single-digit-GB-per-month range even at 5,000 machines. Forwarding anything that repeats on a timer (`POLL`, `STATS`, `*/status`, `PROBE/*` lines, scans, metrics) multiplies usage 100–1,000 times.
 - **Never forward `ACM/*`.** See [Choosing what to send](remote.md#choosing-what-to-send).
-- **Keep metrics local.** The `METRICS` events are about two-thirds of the "everything" volume. They are never forwarded today (`remote.include` can't select them) and are better summarised on the machine. The baseline summary and incident files exist for this.
-- **Compression helps a lot if the target accepts it.** These records gzip to about 15% of their size. A sender that compresses each batch would cut every figure above by roughly 85%. The current stand-in sender doesn't compress.
-- **Network overhead is small.** Records are sent in batches of `remote.batchSize` (default 50), so HTTP/TLS overhead per event is a few bytes. A retry after a failed send re-sends the batch, so a machine that is offline for a while catches up later rather than sending more in total.
+- **Keep metrics local.** The `METRICS` events are about two-thirds of the "everything" volume. They are never forwarded today (no remote's `include` can select them) and are better summarised on the machine. The baseline summary and incident files exist for this.
+- **Compression helps a lot if the target accepts it.** These records gzip to about 15% of their size. A sender that compresses each batch would cut every figure above by roughly 85%. The `azureMonitor` remote gzips each call; the `outbox` remote writes plain JSON.
+- **Network overhead is small.** Records are sent in batches of each remote's `batchSize` (default 50), so HTTP/TLS overhead per event is a few bytes. A retry after a failed send re-sends the batch, so a machine that is offline for a while catches up later rather than sending more in total.

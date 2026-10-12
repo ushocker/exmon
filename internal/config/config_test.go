@@ -59,7 +59,7 @@ func TestTriggersFromJSON(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "c.json")
 	os.WriteFile(p, []byte(`{"incident": {"triggers": [
 		{"name": "weak", "source": "wifi", "metric": "rssi_dbm", "op": "<", "threshold": -75, "forSamples": 3}]},
-		"remote": {"include": [{"kinds": ["ACM/*"]}]}}`), 0o644)
+		"remotes": [{"name": "local", "type": "outbox", "settings": {"path": "x.jsonl"}, "include": [{"kinds": ["ACM/*"]}]}]}`), 0o644)
 	opts, err := Load([]string{"--config", p})
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +67,8 @@ func TestTriggersFromJSON(t *testing.T) {
 	if len(opts.Incident.Triggers) != 1 || opts.Incident.Triggers[0].Threshold != -75 || opts.Incident.Triggers[0].ForSamples != 3 {
 		t.Errorf("triggers = %+v", opts.Incident.Triggers)
 	}
-	if len(opts.Remote.Include) != 1 || opts.Remote.Include[0].Kinds[0] != "ACM/*" {
-		t.Errorf("include = %+v", opts.Remote.Include)
+	if len(opts.Remotes) != 1 || opts.Remotes[0].Include[0].Kinds[0] != "ACM/*" || opts.Remotes[0].BatchSize != 50 {
+		t.Errorf("remotes = %+v (want the file's list, with defaults filled in)", opts.Remotes)
 	}
 
 	os.WriteFile(p, []byte(`{"incident": {"triggers": [{"name": "x", "source": "wifi", "metric": "m", "op": "=="}]}}`), 0o644)
@@ -148,7 +148,51 @@ func TestExampleSeverities(t *testing.T) {
 	if opts.Incident.MaxIncidentsBySeverity[1] != 500 || opts.Incident.MaxIncidentsBySeverity[5] != 20 {
 		t.Errorf("maxIncidentsBySeverity = %v", opts.Incident.MaxIncidentsBySeverity)
 	}
-	if opts.Remote.Include[1].SeverityAtLeast != 3 {
-		t.Errorf("remote include = %+v", opts.Remote.Include)
+	if len(opts.Remotes) == 0 || opts.Remotes[0].Include[1].SeverityAtLeast != 3 {
+		t.Errorf("remotes = %+v", opts.Remotes)
+	}
+}
+
+func TestOldRemoteKeyRejected(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.json")
+	os.WriteFile(p, []byte(`{"remote": {"enabled": true}}`), 0o644)
+	if _, err := Load([]string{"--config", p}); err == nil || !strings.Contains(err.Error(), `"remotes"`) {
+		t.Errorf("want a migration error naming \"remotes\", got %v", err)
+	}
+}
+
+func TestRemoteFlags(t *testing.T) {
+	opts, err := Load([]string{"--config", writeEmpty(t), "--remote-simulate-offline", "--remotes-enabled=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts.Remotes) != 1 || opts.Remotes[0].IsEnabled() || !opts.Remotes[0].SimulateOffline {
+		t.Errorf("flags not applied to the default remote: %+v", opts.Remotes)
+	}
+	if want := filepath.Join(os.Getenv("ProgramData"), `exmon\remote-spool\outbox`); opts.Remotes[0].SpoolDir != want {
+		t.Errorf("default spool = %q, want %q", opts.Remotes[0].SpoolDir, want)
+	}
+}
+
+func TestAzureMonitorRemoteValidates(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.json")
+	os.WriteFile(p, []byte(`{"remotes": [{"name": "law", "type": "azureMonitor", "settings": {
+		"endpoint": "https://x.ingest.monitor.azure.com", "dcrImmutableId": "dcr-0123456789abcdef0123456789abcdef",
+		"streamName": "Custom-ExmonEvents", "tenantId": "11111111-2222-3333-4444-555555555555",
+		"clientId": "66666666-7777-8888-9999-000000000000", "clientSecret": "s3cret"},
+		"include": [{"kinds": ["INCIDENT/*"]}]}]}`), 0o644)
+	opts, err := Load([]string{"--config", p})
+	if err != nil {
+		t.Fatalf("azureMonitor remote: %v", err)
+	}
+	// The remote writes only its spool (the azureMonitor type writes no local files).
+	out := opts.outputs()
+	if last := out[len(out)-1]; last.setting != "remotes[law]" || !strings.HasSuffix(last.path, `remote-spool\law`) ||
+		len(out) != 3 {
+		t.Errorf("outputs = %+v, want log, incidents and the remote's spool", out)
+	}
+	os.WriteFile(p, []byte(`{"remotes": [{"name": "law", "type": "azureMonitor", "settings": {"endpoint": "http://x"}}]}`), 0o644)
+	if _, err := Load([]string{"--config", p}); err == nil || !strings.Contains(err.Error(), "remotes[law].settings") {
+		t.Errorf("bad settings should name the remote: %v", err)
 	}
 }

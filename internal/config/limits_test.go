@@ -29,9 +29,12 @@ func TestUpperLimits(t *testing.T) {
 		{`{"incident": {"maxHoldSeconds": 601}}`, "incident.maxHoldSeconds"},
 		{`{"incident": {"maxIncidents": 10001}}`, "incident.maxIncidents"},
 		{`{"incident": {"maxIncidentsBySeverity": {"1": 20000}}}`, "incident.maxIncidentsBySeverity[1]"},
-		{`{"remote": {"segmentKB": 1}}`, "remote.segmentKB"},
-		{`{"remote": {"maxSpoolMB": 5000}}`, "remote.maxSpoolMB"},
-		{`{"remote": {"batchSize": 5000}}`, "remote.batchSize"},
+		{`{"remotes": [{"name": "r", "type": "outbox", "settings": {"path": "x"}, "segmentKB": 1}]}`, "remotes[r].segmentKB"},
+		{`{"remotes": [{"name": "r", "type": "outbox", "settings": {"path": "x"}, "maxSpoolMB": 5000}]}`, "remotes[r].maxSpoolMB"},
+		{`{"remotes": [{"name": "r", "type": "outbox", "settings": {"path": "x"}, "batchSize": 5000}]}`, "remotes[r].batchSize"},
+		{`{"remotes": [{"name": "r", "type": "outbox", "settings": {"path": "x"}, "flushIntervalMs": 10}]}`, "remotes[r].flushIntervalMs"},
+		{`{"remotes": [{"name": "r", "type": "outbox", "settings": {"path": "x"}, "retryMaxMinutes": 5000}]}`, "remotes[r].retryMaxMinutes"},
+		{`{"remotes": ` + many(9, `{"name":"r","type":"outbox"}`) + `}`, "remotes"},
 		{`{"baseline": {"enabled": true, "maxFiles": 100}}`, "baseline.maxFiles"},
 	}
 	dir := t.TempDir()
